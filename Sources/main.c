@@ -1,21 +1,12 @@
 // ***********************************************************************
-//  ECE 362 - Experiment 7 - Fall 2016
+//  ECE 362 Final Project
 //
-// Dual-channel LED bar graph display                    
+// 8x8 LED display                    
 // ***********************************************************************
 //	 	   			 		  			 		  		
-// Completed by: John Laiman
-//               < your class number >
-//               < your lab division >
-//               < date completed >
-//
-//
-// Academic Honesty Statement:  In entering my name above, I hereby certify
-// that I am the individual who created this HC(S)12 source file and that I 
-// have not copied the work of any other student (past or present) while 
-// completing it. I understand that if I fail to honor this agreement, I will 
-// receive a grade of ZERO and be subject to possible disciplinary action.
-//
+// Completed by: Ben Ng, Joe Aronson, John Laiman, Max Brown
+//               I'm not telling you my class number
+//               Never completed
 // ***********************************************************************
 
 #include <hidef.h>           /* common defines and macros */
@@ -36,6 +27,12 @@ int rghtpb = 0;    // right pushbutton flag
 int runstp = 0;    // run/stop flag                         
 int rticnt = 0;    // RTICNT (variable)
 int prevpb = 0;    // previous state of pushbuttons (variable)
+char ledarray[192];
+
+// led array masks
+int red0 = 0;     // red from 0 - 63
+int blu0 = 64;    // blue from 64 - 127
+int gre0 = 128;   // green from 128 - 191
 	 	   		
 // Initializations
  
@@ -60,21 +57,6 @@ void  initializations(void) {
       SCIBDL =  0x9C; //24,000,000 / 16 / 156 = 9600 (approx)  
       SCICR1 =  0x00; //$9C = 156
       SCICR2 =  0x0C; //initialize SCI for program-driven operation
-         
-//  Initialize Port AD pins 7 and 6 for use as digital inputs
-
-	    DDRAD = 0; 		//program port AD for input mode
-      ATDDIEN = 0xC0; //program PAD7 and PAD6 pins as digital inputs
-         
-//  Add additional port pin initializations here  (e.g., Other DDRs, Ports) 
-
-
-//  Define bar graph segment thresholds (THRESH1..THRESH5)
-//  NOTE: These are binary fractions
-
-
-//  Add RTI/interrupt initializations here
-
 
 }
 	 		  			 		  		
