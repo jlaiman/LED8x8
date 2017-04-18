@@ -4,7 +4,7 @@
 // Dual-channel LED bar graph display                    
 // ***********************************************************************
 //	 	   			 		  			 		  		
-// Completed by: < your name >
+// Completed by: John Laiman
 //               < your class number >
 //               < your lab division >
 //               < date completed >
