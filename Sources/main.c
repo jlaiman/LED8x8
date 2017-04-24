@@ -12,6 +12,7 @@
 #include <hidef.h>           /* common defines and macros */
 #include "derivative.h"      /* derivative-specific definitions */
 #include <mc9s12c32.h>
+#include <stdlib.h>
 
 // All funtions after main should be initialized here
 
@@ -19,18 +20,44 @@
 char inchar(void);
 void outchar(char x);
 
+// LED graphic functions
+void loadPattern(void);
+void copyPattern(int color, const char pat[]);
+
 // SPI functions
+void shiftLedArray(void);
 void shiftout(char x);
+
+//  Constant declarations
+#define COLORS        3 // number of color channels
+#define RED           0 // red channel is index 0
+#define GREEN         1 // green channel is index 1
+#define BLUE          2 // blue channel is index 2
+#define ROWS          8 // number of LED rows
+#define BASSTHRESH    .75 // threshold for bass hit/kick
+#define MICLOWTHRESH  .25 // low threshold for mic out
+#define MICMIDTHRESH  .50 // mid threshold for mic out
+#define MICHIGHTHRESH .75 // high threshold for mic out
+#define NEXTCOLOR(c)  ((c + 1) % COLORS)
 			 		  		
 //  Variable declarations
 int i;
 int j;
-char ledarray[3][8];// buffer of led values
+int color;
+char ledarray[COLORS][ROWS];// buffer of led values
+char lowPass; // low-pass ATD value
+char micOut; // mic out ATD value
 
-// Led array masks
-//int red0 = 0;    // red   from 0 - 7
-//int blu0 = 8;    // blue  from 8 - 15
-//int gre0 = 16;   // green from 16 - 23
+//  Graphic constants and variables
+char pattern[ROWS];
+const char squareBorder2[ROWS]  = {0x00, 0x00, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00}; // inner square
+const char squareBorder4[ROWS]  = {0x00, 0x00, 0x3C, 0x24, 0x24, 0x3C, 0x00, 0x00}; // second inner square
+const char squareBorder6[ROWS]  = {0x00, 0x7E, 0x42, 0x42, 0x42, 0x42, 0x7E, 0x00}; // second outer square
+const char squareBorder8[ROWS]  = {0xFF, 0x81, 0x81, 0x81, 0x81, 0x81, 0x81, 0xFF}; // outer square
+const char squareTopLeft[ROWS]  = {0xF0, 0xF0, 0xF0, 0xF0, 0x00, 0x00, 0x00, 0x00}; // top left square
+const char squareTopRight[ROWS] = {0x0F, 0x0F, 0x0F, 0x0F, 0x00, 0x00, 0x00, 0x00}; // top right square
+const char squareBotLeft[ROWS]  = {0x00, 0x00, 0x00, 0x00, 0xF0, 0xF0, 0xF0, 0xF0}; // bottom left square
+const char squareBotRight[ROWS] = {0x00, 0x00, 0x00, 0x00, 0x0F, 0x0F, 0x0F, 0x0F}; // bottom right square
 	 	   		
 // Initializations
 void  initializations(void) {
@@ -68,7 +95,16 @@ void  initializations(void) {
                     // tim period = 1/1.5M = 6.67us 
   TSCR2_TCRE = 1;   // reset TCNT on successful oc7
   TC7 = 1500;       // period = 1500 * 6.67us = 1ms
-  TIE_C7I = 1;      // enable TC7 interupts
+  TIE_C7I = 0;      // disnable TC7 interupts initially
+
+/* 
+ Initialize the ATD to sample 2 D.C. input voltages (range: 0 to 5V)
+ on Channel 0 and 1. The ATD should be operated in normal flag clear
+ mode using nominal sample time/clock prescaler values, 8-bit, unsigned, non-FIFO mode.
+*/	 	   			 		  			 		  		
+  ATDCTL2 = 0x80; // power up ATD
+	ATDCTL3 = 0x10; // set conversion sequence length to TWO
+	ATDCTL4 = 0x85; // select 8-bit resolution and sample time
 
 }
 	 		  			 		  		
@@ -76,8 +112,11 @@ void  initializations(void) {
 // Main (non-terminating loop)
  
 void main(void) {
+  DisableInterrupts;
 	initializations(); 		  			 		  		
 	EnableInterrupts;
+	
+  TIE_C7I = 1;      // enable TC7 interupts
 
 
   for(;;) {
@@ -100,13 +139,9 @@ void main(void) {
 //
 //  If change in state from "high" to "low" detected, set pushbutton flag
 //     leftpb (for PAD7 H -> L), rghtpb (for PAD6 H -> L)
-//     Recall that pushbuttons are momentary contact closures to ground
-//
-//  Also, keeps track of when one-tenth of a second's worth of RTI interrupts
-//     accumulate, and sets the "tenth second" flag         	   			 		  			 		  		
+//     Recall that pushbuttons are momentary contact closures to ground        	   			 		  			 		  		
  
-interrupt 7 void RTI_ISR( void)
-{
+interrupt 7 void RTI_ISR( void) {
  // set CRGFLG bit to clear RTI device flag
   	CRGFLG = CRGFLG | 0x80; 
 	
@@ -120,20 +155,90 @@ interrupt 7 void RTI_ISR( void)
   Initialized for 1.0 ms interrupt rate
   
   Shifts out LED data every 1.0 ms 		  			 		  		
-;***********************************************************************
+***********************************************************************
 */
 
-interrupt 15 void TIM_ISR(void)
-{
+interrupt 15 void TIM_ISR(void) {
   // clear TIM CH 7 interrupt flag 
  	TFLG1 = TFLG1 | 0x80;
+  
+ 	ATDCTL5 = 0x10; // start ATD conversion
+ 	while (ATDSTAT0_SCF == 0) {} // wait for conversion complete
+ 	lowPass = ATDDR0H; // retrieve/load low-pass ATD value
+ 	micOut = ATDDR1H; // retrieve/load mic out ATD value
  	
- 	for(i = 0; i < 3; i++) {
- 	  for(j = 0; j < 8; j++) {
- 	    shiftout(ledarray[i][j]);
- 	  }
- 	}
+ 	loadPattern();
  	
+ 	shiftLedArray();
+ 	
+}
+
+/*
+***********************************************************************                       
+  loadPattern
+  
+  Loads ledarray with a pattern
+***********************************************************************
+*/
+
+void loadPattern(void) {
+  if (lowPass >= BASSTHRESH) {
+    // file outer square border white
+    //pattern = squareBorder8;
+    copyPattern(RED, squareBorder8);
+    copyPattern(GREEN, squareBorder8);
+    copyPattern(BLUE, squareBorder8);
+  }
+  
+  color = (int)(rand() * COLORS); // randomize starting color
+  if (micOut >= MICLOWTHRESH) {
+    // fill inner square border
+    //pattern = squareBorder2;
+    copyPattern(color, squareBorder2);
+    color = NEXTCOLOR(color);
+  }
+  if (micOut >= MICMIDTHRESH) {
+    // fill second inner square border
+    //pattern = squareBorder4;
+    copyPattern(color, squareBorder4); 
+    color = NEXTCOLOR(color);
+  }
+  if (micOut >= MICHIGHTHRESH) {
+    // fill second outer square border
+    //pattern = squareBorder6;
+    copyPattern(color, squareBorder6); 
+    color = NEXTCOLOR(color);
+  }
+}
+
+/*
+***********************************************************************                       
+  copyPattern(int color)
+  
+  Copies the current pattern into specified color channel
+***********************************************************************
+*/
+
+void copyPattern(int color, const char pat[]) {
+  for (i = 0; i < ROWS; i++) {
+    ledarray[color][i] = pat[i];
+  }
+}
+
+/*
+***********************************************************************                       
+  shiftLedArray
+  
+  Shifts out current value of ledarray to LED's on board 		  			 		  		
+***********************************************************************
+*/
+
+void shiftLedArray(void) {
+  for (i = 2; i >= 0; i--) {
+    for (j = 7; j >= 0; j--) {
+      shiftout(ledarray[i][j]);
+    }
+  }
 }
 
 /*
@@ -144,15 +249,12 @@ interrupt 15 void TIM_ISR(void)
             MISO = PM[4]
             SCK  = PM[5]
 ***********************************************************************
-*/
- 
-void shiftout(char x)
-
-{
+*/ 
+void shiftout(char x) {
   // read the SPTEF bit, continue if bit is 1
   // write data to SPI data register
   // wait for 30 cycles for SPI data to shift out 
-  if(SPISR_SPTEF) {
+  while (SPISR_SPTEF == 0) {
     SPIDR = x;
     asm {
       psha
