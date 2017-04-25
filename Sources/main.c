@@ -37,8 +37,10 @@ void shiftout(char x);
 #define BASSTHRESH    .75 // threshold for bass hit/kick
 #define MICLOWTHRESH  .25 // low threshold for mic out
 #define MICMIDTHRESH  .50 // mid threshold for mic out
-#define MICHIGHTHRESH .75 // high threshold for mic out
-#define NEXTCOLOR(c)  ((c + 1) % COLORS)
+#define MICHIGHTHRESH .75 // high threshold for mic out             
+#define RANDCOLOR     ((int)(rand() * COLORS)) // returns random color index
+#define NEXTCOLOR(c)  ((c + 1) % COLORS) // returns next color index
+#define PREVCOLOR(c)  ((c + COLORS - 1) % COLORS) // returns previous color index
 			 		  		
 //  Variable declarations
 int i;
@@ -50,14 +52,23 @@ char micOut; // mic out ATD value
 
 //  Graphic constants and variables
 char pattern[ROWS];
-const char squareBorder2[ROWS]  = {0x00, 0x00, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00}; // inner square
-const char squareBorder4[ROWS]  = {0x00, 0x00, 0x3C, 0x24, 0x24, 0x3C, 0x00, 0x00}; // second inner square
-const char squareBorder6[ROWS]  = {0x00, 0x7E, 0x42, 0x42, 0x42, 0x42, 0x7E, 0x00}; // second outer square
-const char squareBorder8[ROWS]  = {0xFF, 0x81, 0x81, 0x81, 0x81, 0x81, 0x81, 0xFF}; // outer square
-const char squareTopLeft[ROWS]  = {0xF0, 0xF0, 0xF0, 0xF0, 0x00, 0x00, 0x00, 0x00}; // top left square
-const char squareTopRight[ROWS] = {0x0F, 0x0F, 0x0F, 0x0F, 0x00, 0x00, 0x00, 0x00}; // top right square
-const char squareBotLeft[ROWS]  = {0x00, 0x00, 0x00, 0x00, 0xF0, 0xF0, 0xF0, 0xF0}; // bottom left square
-const char squareBotRight[ROWS] = {0x00, 0x00, 0x00, 0x00, 0x0F, 0x0F, 0x0F, 0x0F}; // bottom right square
+const char squareBorder2[ROWS]    = {0x00, 0x00, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00}; // inner square
+const char squareBorder4[ROWS]    = {0x00, 0x00, 0x3C, 0x24, 0x24, 0x3C, 0x00, 0x00}; // second inner square
+const char squareBorder6[ROWS]    = {0x00, 0x7E, 0x42, 0x42, 0x42, 0x42, 0x7E, 0x00}; // second outer square
+const char squareBorder8[ROWS]    = {0xFF, 0x81, 0x81, 0x81, 0x81, 0x81, 0x81, 0xFF}; // outer square
+const char squareTopLeft[ROWS]    = {0xF0, 0xF0, 0xF0, 0xF0, 0x00, 0x00, 0x00, 0x00}; // top left square
+const char squareTopRight[ROWS]   = {0x0F, 0x0F, 0x0F, 0x0F, 0x00, 0x00, 0x00, 0x00}; // top right square
+const char squareBotLeft[ROWS]    = {0x00, 0x00, 0x00, 0x00, 0xF0, 0xF0, 0xF0, 0xF0}; // bottom left square
+const char squareBotRight[ROWS]   = {0x00, 0x00, 0x00, 0x00, 0x0F, 0x0F, 0x0F, 0x0F}; // bottom right square
+const char inSquareTopLeft[ROWS]  = {0x00, 0x60, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00}; // top left inner square
+const char inSquareTopMid[ROWS]   = {0x00, 0x18, 0x18, 0x00, 0x00, 0x00, 0x00, 0x00}; // top mid inner square
+const char inSquareTopRight[ROWS] = {0x00, 0x06, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00}; // top right inner square
+const char inSquareMidLeft[ROWS]  = {0x00, 0x00, 0x00, 0x60, 0x60, 0x00, 0x00, 0x00}; // mid left inner square
+const char inSquareMidMid[ROWS]   = {0x00, 0x00, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00}; // mid mid inner square
+const char inSquareMidRight[ROWS] = {0x00, 0x00, 0x00, 0x06, 0x06, 0x00, 0x00, 0x00}; // mid right inner square
+const char inSquareBotLeft[ROWS]  = {0x00, 0x00, 0x00, 0x00, 0x00, 0x60, 0x60, 0x00}; // bot left inner square
+const char inSquareBotMid[ROWS]   = {0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x18, 0x00}; // bot mid inner square
+const char inSquareBotRight[ROWS] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x06, 0x00}; // bot right inner square
 	 	   		
 // Initializations
 void  initializations(void) {
@@ -84,7 +95,7 @@ void  initializations(void) {
   SPIBR = 0x01;     // initialize baud rate for 6Mbps 
                     // (we may need to change this depending 
                     // on shift register speed)
-  SPICR1_CPHA = 0;  // sample at odd edges
+  SPICR1_CPHA = 0;  // sample at even edges
   SPICR1_MSTR = 1;  // set as master
   SPICR1_SPE  = 1;  // enable spi system
   
@@ -95,16 +106,20 @@ void  initializations(void) {
                     // tim period = 1/1.5M = 6.67us 
   TSCR2_TCRE = 1;   // reset TCNT on successful oc7
   TC7 = 1500;       // period = 1500 * 6.67us = 1ms
-  TIE_C7I = 0;      // disnable TC7 interupts initially
-
+  TIE_C7I = 0;      // disable TC7 interupts initially
+  
 /* 
  Initialize the ATD to sample 2 D.C. input voltages (range: 0 to 5V)
  on Channel 0 and 1. The ATD should be operated in normal flag clear
  mode using nominal sample time/clock prescaler values, 8-bit, unsigned, non-FIFO mode.
 */	 	   			 		  			 		  		
   ATDCTL2 = 0x80; // power up ATD
-	ATDCTL3 = 0x10; // set conversion sequence length to TWO
-	ATDCTL4 = 0x85; // select 8-bit resolution and sample time
+  ATDCTL3 = 0x10; // set conversion sequence length to TWO
+  ATDCTL4 = 0x85; // select 8-bit resolution and sample time
+  
+/* Initialize RTI for 2.048 ms interrupt rate */
+  CRGINT_RTIE = 1; // enable RTI interrupt
+  RTICTL = 0x50; // RTI rate of 2.048 ms
 
 }
 	 		  			 		  		
@@ -190,7 +205,7 @@ void loadPattern(void) {
     copyPattern(BLUE, squareBorder8);
   }
   
-  color = (int)(rand() * COLORS); // randomize starting color
+  color = RANDCOLOR; // randomize starting color
   if (micOut >= MICLOWTHRESH) {
     // fill inner square border
     //pattern = squareBorder2;
