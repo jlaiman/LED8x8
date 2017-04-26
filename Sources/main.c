@@ -35,15 +35,15 @@ void shiftout(char x);
 #define GREEN           1 // green channel is index 1
 #define BLUE            2 // blue channel is index 2
 #define ROWS            8 // number of LED rows
+#define NUMPATTERNS     6 // number of patterns for LED graphic
 #define BASSTHRESH      .75 // threshold for bass hit/kick
-#define NUMPATTERNS     5 // number of patterns for LED graphic
 #define RANDINT(max)    ((int)(rand() * max)) // returns random int
 #define NEXTINT(n, mod) ((n + 1) % mod) // returns next int
 #define PREVINT(n, mod) ((n + mod - 1) % mod) // returns previous int
 			 		  		
 //  Variable declarations
-int i;
-int j;
+int i; // loop index
+int j; // loop index
 int color; // color index for loading patterns
 char ledarray[COLORS][ROWS]; // buffer of led values
 char lowPass; // low-pass ATD value
@@ -180,45 +180,18 @@ interrupt 15 void TIM_ISR(void) {
  	
 }
 
-void initializeGraphics() {
-  patIndex = 0;
+/*
+***********************************************************************                       
+  initializeGraphics
+
+  Load sequences with graphics and bass patterns
+***********************************************************************
+*/
+
+void initializeGraphics(void) {
+  patIndex = 1;
   
-  // patterns[0] is concentric squares and outer border bass
-  patterns[0].levels = 4;
-  patterns[0].sequence = (char **)malloc(sizeof(char *) * patterns[0].levels);
-  for (i = 0; i < patterns[0].levels; i++) {
-    patterns[0].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
-  }
-  for (i = 0; i < ROWS; i++) {
-    if (i == 0 || i == 7) {
-      patterns[0].bass[i] = 0xFF;
-      patterns[0].sequence[3][i] = 0xFF;
-    } else {
-      patterns[0].bass[i] = 0x81;
-      patterns[0].sequence[3][i] = 0x81;
-    }
-    if (i == 3 || i == 4) {
-      patterns[0].sequence[0][i] = 0x18;
-    } else {
-      patterns[0].sequence[0][i] = 0x00;
-    }
-    if (i == 2 || i == 5) {
-      patterns[0].sequence[1][i] = 0x3C;
-    } else if (i == 3 || i == 4) {
-      patterns[0].sequence[1][i] = 0x24;
-    } else {
-      patterns[0].sequence[1][i] = 0x00;
-    }
-    if (i == 1 || i == 6) {
-      patterns[0].sequence[2][i] = 0x7E;
-    } else if (i > 1 && i < 6) {
-      patterns[0].sequence[2][i] = 0x42;
-    } else {
-      patterns[0].sequence[2][i] = 0x00;
-    }
-  }
-  
-  // patterns[1] is 4 4x4 squares and outer border bass
+  // patterns[1] is concentric squares and outer border bass
   patterns[1].levels = 4;
   patterns[1].sequence = (char **)malloc(sizeof(char *) * patterns[1].levels);
   for (i = 0; i < patterns[1].levels; i++) {
@@ -227,24 +200,34 @@ void initializeGraphics() {
   for (i = 0; i < ROWS; i++) {
     if (i == 0 || i == 7) {
       patterns[1].bass[i] = 0xFF;
+      patterns[1].sequence[3][i] = 0xFF;
     } else {
       patterns[1].bass[i] = 0x81;
+      patterns[1].sequence[3][i] = 0x81;
     }
-    if (i < 4) {
-      patterns[1].sequence[0][i] = 0xF0; 
-      patterns[1].sequence[1][i] = 0x0F; 
-      patterns[1].sequence[2][i] = 0x00;
-      patterns[1].sequence[3][i] = 0x00;
+    if (i == 3 || i == 4) {
+      patterns[1].sequence[0][i] = 0x18;
     } else {
       patterns[1].sequence[0][i] = 0x00;
+    }
+    if (i == 2 || i == 5) {
+      patterns[1].sequence[1][i] = 0x3C;
+    } else if (i == 3 || i == 4) {
+      patterns[1].sequence[1][i] = 0x24;
+    } else {
       patterns[1].sequence[1][i] = 0x00;
-      patterns[1].sequence[2][i] = 0xF0; 
-      patterns[1].sequence[3][i] = 0x0F;
+    }
+    if (i == 1 || i == 6) {
+      patterns[1].sequence[2][i] = 0x7E;
+    } else if (i > 1 && i < 6) {
+      patterns[1].sequence[2][i] = 0x42;
+    } else {
+      patterns[1].sequence[2][i] = 0x00;
     }
   }
   
-  // patterns[2] is 9 inner 2x2 squares and outer border bass
-  patterns[2].levels = 3;
+  // patterns[2] is 4 4x4 squares and outer border bass
+  patterns[2].levels = 4;
   patterns[2].sequence = (char **)malloc(sizeof(char *) * patterns[2].levels);
   for (i = 0; i < patterns[2].levels; i++) {
     patterns[2].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
@@ -255,67 +238,108 @@ void initializeGraphics() {
     } else {
       patterns[2].bass[i] = 0x81;
     }
-    if (i == 1 || i == 2 || i == 5 || i == 6) { 
-      patterns[2].sequence[0][i] = 0x00;
-      patterns[2].sequence[1][i] = 0x18;
-      patterns[2].sequence[2][i] = 0x66;
-    } else if (i == 3 || i == 4) {
-      patterns[2].sequence[0][i] = 0x18;
-      patterns[2].sequence[1][i] = 0x66;
+    if (i < 4) {
+      patterns[2].sequence[0][i] = 0xF0; 
+      patterns[2].sequence[1][i] = 0x0F; 
       patterns[2].sequence[2][i] = 0x00;
+      patterns[2].sequence[3][i] = 0x00;
     } else {
       patterns[2].sequence[0][i] = 0x00;
       patterns[2].sequence[1][i] = 0x00;
-      patterns[2].sequence[2][i] = 0x00;
+      patterns[2].sequence[2][i] = 0xF0; 
+      patterns[2].sequence[3][i] = 0x0F;
     }
   }
   
-  // patterns[3] is horizontal bars with vertical bass
-  patterns[3].levels = 4;
+  // patterns[3] is 9 inner 2x2 squares and outer border bass
+  patterns[3].levels = 3;
   patterns[3].sequence = (char **)malloc(sizeof(char *) * patterns[3].levels);
   for (i = 0; i < patterns[3].levels; i++) {
     patterns[3].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
   }
   for (i = 0; i < ROWS; i++) {
-    patterns[3].bass[i] = 0x81;
-    if (i == 3 || i == 4) {
-      patterns[3].sequence[0][i] = 0xFF;
+    if (i == 0 || i == 7) {
+      patterns[3].bass[i] = 0xFF;
+    } else {
+      patterns[3].bass[i] = 0x81;
+    }
+    if (i == 1 || i == 2 || i == 5 || i == 6) { 
+      patterns[3].sequence[0][i] = 0x00;
+      patterns[3].sequence[1][i] = 0x18;
+      patterns[3].sequence[2][i] = 0x66;
+    } else if (i == 3 || i == 4) {
+      patterns[3].sequence[0][i] = 0x18;
+      patterns[3].sequence[1][i] = 0x66;
+      patterns[3].sequence[2][i] = 0x00;
     } else {
       patterns[3].sequence[0][i] = 0x00;
-    }
-    if (i == 2 || i == 5) {
-      patterns[3].sequence[1][i] = 0xFF;
-    } else {
       patterns[3].sequence[1][i] = 0x00;
-    }
-    if (i == 1 || i == 6) {
-      patterns[3].sequence[2][i] = 0xFF;
-    } else {
       patterns[3].sequence[2][i] = 0x00;
-    }
-    if (i == 0 || i == 7) {
-      patterns[3].sequence[3][i] = 0xFF;
-    } else {
-      patterns[3].sequence[3][i] = 0x00;
     }
   }
   
-  // patterns[4] is vertical bars with horizontal bass
+  // patterns[4] is horizontal bars with vertical bass
   patterns[4].levels = 4;
   patterns[4].sequence = (char **)malloc(sizeof(char *) * patterns[4].levels);
   for (i = 0; i < patterns[4].levels; i++) {
     patterns[4].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
   }
   for (i = 0; i < ROWS; i++) {
-    if (i == 0 || i == 7) {
-      patterns[4].bass[i] = 0xFF;
+    patterns[4].bass[i] = 0x81;
+    if (i == 3 || i == 4) {
+      patterns[4].sequence[0][i] = 0xFF;
     } else {
-      patterns[4].bass[i] = 0x00;
+      patterns[4].sequence[0][i] = 0x00;
     }
-    patterns[4].sequence[0][i] = 0x18;
-    patterns[4].sequence[1][i] = 0x24;
-    patterns[4].sequence[2][i] = 0x42;
-    patterns[4].sequence[3][i] = 0x81;
+    if (i == 2 || i == 5) {
+      patterns[4].sequence[1][i] = 0xFF;
+    } else {
+      patterns[4].sequence[1][i] = 0x00;
+    }
+    if (i == 1 || i == 6) {
+      patterns[4].sequence[2][i] = 0xFF;
+    } else {
+      patterns[4].sequence[2][i] = 0x00;
+    }
+    if (i == 0 || i == 7) {
+      patterns[4].sequence[3][i] = 0xFF;
+    } else {
+      patterns[4].sequence[3][i] = 0x00;
+    }
+  }
+  
+  // patterns[5] is vertical bars with horizontal bass
+  patterns[5].levels = 4;
+  patterns[5].sequence = (char **)malloc(sizeof(char *) * patterns[5].levels);
+  for (i = 0; i < patterns[5].levels; i++) {
+    patterns[5].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
+  }
+  for (i = 0; i < ROWS; i++) {
+    if (i == 0 || i == 7) {
+      patterns[5].bass[i] = 0xFF;
+    } else {
+      patterns[5].bass[i] = 0x00;
+    }
+    patterns[5].sequence[0][i] = 0x18;
+    patterns[5].sequence[1][i] = 0x24;
+    patterns[5].sequence[2][i] = 0x42;
+    patterns[5].sequence[3][i] = 0x81;
+  }
+}
+
+/*
+***********************************************************************                       
+  clearPattern
+  
+  Clears ledarray (fills with 0's)
+***********************************************************************
+*/
+
+void clearPattern(void) {
+  for (i = 0; i < COLORS; i++) {
+    for (j = 0; j < ROWS; j++) {
+      ledarray[i][j] = 0x00;
+    }
   }
 }
 
@@ -323,28 +347,47 @@ void initializeGraphics() {
 ***********************************************************************                       
   loadPattern
   
-  Loads ledarray with a pattern
+  Loads ledarray with a pattern based on patIndex
 ***********************************************************************
 */
 
-void loadPattern() {
-  if (lowPass >= BASSTHRESH) {
-    // fills bass pattern white
-    copyPattern(RED, patterns[patIndex].bass);
-    copyPattern(GREEN, patterns[patIndex].bass);
-    copyPattern(BLUE, patterns[patIndex].bass);
-  }
-  
-  color = RANDINT(COLORS); // randomize starting color
-  for (i = 0; i < (int)(micOut * patterns[patIndex].levels); i++) {
-    copyPattern(color, patterns[patIndex].sequence[i]);
-    color = NEXTINT(color, COLORS);
+void loadPattern(void) {
+  // special case pattern (patIndex = 0)
+  // scrolling amplitude display to the left (white/all RGB)
+  if (patIndex == 0) {
+    for (i = 0; i < COLORS; i++) {
+      for (j = 0; j < ROWS; j++) {
+        ledarray[i][j] = ledarray[i][j] << 1;
+        if (j < micOut * ROWS) {
+          ledarray[i][j] = ledarray[i][j] | 0x01;
+        }
+      }
+    }
+  } else {
+    clearPattern();
+    
+    if (lowPass >= BASSTHRESH) {
+      // fills bass pattern white/all RGB
+      copyPattern(RED, patterns[patIndex].bass);
+      copyPattern(GREEN, patterns[patIndex].bass);
+      copyPattern(BLUE, patterns[patIndex].bass);
+    }
+    
+    color = RANDINT(COLORS); // randomize starting color
+    j = (int)((double)micOut * (double)(patterns[patIndex].levels + 1)); // number of pattern sequences to output
+    if (j > patterns[patIndex].levels) {
+      j = patterns[patIndex].levels;
+    }
+    for (i = 0; i < j; i++) {
+      copyPattern(color, patterns[patIndex].sequence[i]);
+      color = NEXTINT(color, COLORS);
+    }
   }
 }
 
 /*
 ***********************************************************************                       
-  copyPattern(int color)
+  copyPattern(int color, char pat[])
   
   Copies the current pattern into specified color channel
 ***********************************************************************
