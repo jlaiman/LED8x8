@@ -13,15 +13,19 @@
 #include "derivative.h"      /* derivative-specific definitions */
 #include <mc9s12c32.h>
 #include <stdlib.h>
+#include <math.h>
 
 // All funtions after main should be initialized here
 
 // Note: inchar and outchar can be used for debugging purposes
 char inchar(void);
 void outchar(char x);
+char checkInChar(void);
 
 // LED graphic functions
 void initializeGraphics(void);
+void clearPattern(void);
+void averageSamples(void);
 void loadPattern(void);
 void copyPattern(int color, char pat[]);
 
@@ -30,24 +34,39 @@ void shiftLedArray(void);
 void shiftout(char x);
 
 //  Constant declarations
+#define ROWS            8 // number of LED rows
 #define COLORS          3 // number of color channels
 #define RED             0 // red channel is index 0
 #define GREEN           1 // green channel is index 1
 #define BLUE            2 // blue channel is index 2
-#define ROWS            8 // number of LED rows
-#define NUMPATTERNS     6 // number of patterns for LED graphic
+
+#define NUMPATTERNS     5 // number of patterns for LED graphic
 #define BASSTHRESH      .75 // threshold for bass hit/kick
+
 #define RANDINT(max)    ((int)(rand() * max)) // returns random int
-#define NEXTINT(n, mod) ((n + 1) % mod) // returns next int
+#define NEXTINT(n, mod) ((n + 1) % mod)       // returns next int
 #define PREVINT(n, mod) ((n + mod - 1) % mod) // returns previous int
+
+#define TIMPRESCALE     0x03 // timer prescale (2^3 = 8)
+#define TIMVAL          60   // TC7 value (60 / (24e6 / 8) = .02 ms)
+#define MILSECFACTOR    50   // number of compares to make 1 ms
+                             // .001 / (60 / (24e6 / 2^3))
 			 		  		
 //  Variable declarations
 int i; // loop index
 int j; // loop index
+
+int timCount; // timer interrupt count
+char milSec; // 1 ms flag
+
 int color; // color index for loading patterns
+int startColor; // pattern starting color
+
 char ledarray[COLORS][ROWS]; // buffer of led values
-char lowPass; // low-pass ATD value
-char micOut; // mic out ATD value
+char lowPass[MILSECFACTOR]; // low-pass ATD values
+char micOut[MILSECFACTOR]; // mic out ATD values
+double lowPassAvg; // low-pass ATD average value
+double micOutAvg; // mic out ATD average value
 
 //  Graphic struct and variables
 typedef struct PatternSeq {
@@ -58,6 +77,7 @@ typedef struct PatternSeq {
 
 Pattern patterns[NUMPATTERNS]; // array of all Patterns
 int patIndex; // index for current working pattern
+int prevPatIndex; // previous pattern index
 	 	   		
 // Initializations
 void initializations(void) {
@@ -75,7 +95,7 @@ void initializations(void) {
 
 // Initialize asynchronous serial port (SCI) for 9600 baud, no interrupts
   SCIBDH =  0x00;   // set baud rate to 9600
-  SCIBDL =  0x9C;   // 24,000,000 / 16 / 156 = 9600 (approx)  
+  SCIBDL =  0x9C;   // 24,000,000 / 16 / 156 = 9600 (approx)
   SCICR1 =  0x00;   // $9C = 156
   SCICR2 =  0x0C;   // initialize SCI for program-driven operation
 
@@ -89,13 +109,13 @@ void initializations(void) {
   SPICR1_SPE  = 1;  // enable spi system
   
 // Initialize the TIM
-  TSCR1_TEN = 1;    // enable tim system
-  TIOS_IOS7 = 1;    // set ch7 for output compare
-  TSCR2 |= 0x04;    // set pre-scale to 16 (tim freq = 24M/16 = 1.5M)
-                    // tim period = 1/1.5M = 6.67us 
-  TSCR2_TCRE = 1;   // reset TCNT on successful oc7
-  TC7 = 1500;       // period = 1500 * 6.67us = 1ms
-  TIE_C7I = 0;      // disable TC7 interupts initially
+  TSCR1_TEN = 1;        // enable tim system
+  TIOS_IOS7 = 1;        // set ch7 for output compare
+  TSCR2 |= TIMPRESCALE; // set pre-scale to 8 (tim freq = 24 MHz/8 = 3 MHz)
+                        // tim period = 1/3 MHz = .333 us
+  TSCR2_TCRE = 1;       // reset TCNT on successful oc7
+  TC7 = TIMVAL;         // period = 60 * .333 us = .02 ms
+  TIE_C7I = 0;          // disable TC7 interupts initially
   
 /* 
  Initialize the ATD to sample 2 D.C. input voltages (range: 0 to 5V)
@@ -105,6 +125,20 @@ void initializations(void) {
   ATDCTL2 = 0x80; // power up ATD
   ATDCTL3 = 0x10; // set conversion sequence length to TWO
   ATDCTL4 = 0x85; // select 8-bit resolution and sample time
+
+/*
+  Initialize PWM
+*/
+	MODRR	= 0x01; // Port T module routing register - PWM on PT0
+	DDRT |= 0x01; // PT0 is output
+	PWME = 0x01; // PWM ch 0 enable
+  PWMPOL = 0x01; // PWM ch 0 active high polarity
+  PWMCLK = 0x00; // PWM ch 0 clock A
+  PWMPRCLK = 0x02; // PWM pre-scale clock (2^2 = 4) - 24 MHz / 4 = 6 MHz
+  PWMCAE = 0x00; // PWM center align disabled
+  PWMCTL = 0x00; // PWM control (concatenate enable)
+  PWMPER0 = 0x64; // PWM ch 0 period register (100) - 6 MHz / 100 = 60 kHz
+  PWMDTY0 = 0x00; // PWM ch 0 duty register - 0 initially (LEDs off)
   
 /* Initialize RTI for 2.048 ms interrupt rate */
   CRGINT_RTIE = 1; // enable RTI interrupt
@@ -114,10 +148,15 @@ void initializations(void) {
   initializeGraphics();
 
 }
-	 		  			 		  		
- 
-// Main (non-terminating loop)
- 
+
+/*
+***********************************************************************
+  
+  Main (non-terminating loop)
+  
+***********************************************************************
+*/
+
 void main(void) {
   DisableInterrupts;
 	initializations(); 		  			 		  		
@@ -127,9 +166,7 @@ void main(void) {
 
 
   for(;;) {
-
-	 	   			 		  			 		  		
-
+    
   } /* loop forever */
   
 }  /* make sure that you never leave main */
@@ -146,7 +183,8 @@ void main(void) {
 //
 //  If change in state from "high" to "low" detected, set pushbutton flag
 //     leftpb (for PAD7 H -> L), rghtpb (for PAD6 H -> L)
-//     Recall that pushbuttons are momentary contact closures to ground        	   			 		  			 		  		
+//     Recall that pushbuttons are momentary contact closures to ground
+// ***********************************************************************
  
 interrupt 7 void RTI_ISR( void) {
  // set CRGFLG bit to clear RTI device flag
@@ -159,25 +197,44 @@ interrupt 7 void RTI_ISR( void) {
 ***********************************************************************                       
   TIM interrupt service routine
 
-  Initialized for 1.0 ms interrupt rate
-  
-  Shifts out LED data every 1.0 ms 		  			 		  		
+  Initialized for .02 ms interrupt rate
+  Samples every .02 ms and flags every 1 ms to shift out LED data
 ***********************************************************************
 */
 
 interrupt 15 void TIM_ISR(void) {
   // clear TIM CH 7 interrupt flag 
  	TFLG1 = TFLG1 | 0x80;
-  
+ 	
  	ATDCTL5 = 0x10; // start ATD conversion
  	while (ATDSTAT0_SCF == 0) {} // wait for conversion complete
- 	lowPass = ATDDR0H; // retrieve/load low-pass ATD value
- 	micOut = ATDDR1H; // retrieve/load mic out ATD value
+ 	lowPass[timCount] = ATDDR0H; // retrieve/load low-pass ATD value
+ 	micOut[timCount] = ATDDR1H; // retrieve/load mic out ATD value
  	
- 	loadPattern();
+ 	timCount++;
+ 	if (timCount == MILSECFACTOR) {
+ 	  milSec = 1;
+    timCount = 0;
+ 	}
  	
- 	shiftLedArray();
- 	
+ 	if (milSec == 1) { 
+   	prevPatIndex = patIndex; // save previous pattern index
+   	patIndex = (int)checkInChar(); // use SCI to input character
+   	if (patIndex != -1) {
+   	  patIndex = patIndex - (int)'0'; // fix '0' character offset
+   	  startColor = RANDINT(COLORS); // generate new random starting color
+   	} else {
+   	  patIndex = prevPatIndex; // maintain old pattern
+   	}
+   	
+    clearPattern();
+ 	  averageSamples();
+ 	  PWMDTY0 = (char)(PWMPER0 * micOutAvg);
+ 	  loadPattern();
+ 	  shiftLedArray();
+ 	  
+ 	  milSec = 0;
+ 	}
 }
 
 /*
@@ -188,10 +245,46 @@ interrupt 15 void TIM_ISR(void) {
 ***********************************************************************
 */
 
-void initializeGraphics(void) {
-  patIndex = 1;
+void initializeGraphics(void) {   
+  startColor = RANDINT(COLORS);
+  patIndex = RANDINT(NUMPATTERNS);
   
-  // patterns[1] is concentric squares and outer border bass
+  // patterns[0] is concentric squares and outer border bass
+  patterns[0].levels = 4;
+  patterns[0].sequence = (char **)malloc(sizeof(char *) * patterns[0].levels);
+  for (i = 0; i < patterns[0].levels; i++) {
+    patterns[0].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
+  }
+  for (i = 0; i < ROWS; i++) {
+    if (i == 0 || i == 7) {
+      patterns[0].bass[i] = 0xFF;
+      patterns[0].sequence[3][i] = 0xFF;
+    } else {
+      patterns[0].bass[i] = 0x81;
+      patterns[0].sequence[3][i] = 0x81;
+    }
+    if (i == 3 || i == 4) {
+      patterns[0].sequence[0][i] = 0x18;
+    } else {
+      patterns[0].sequence[0][i] = 0x00;
+    }
+    if (i == 2 || i == 5) {
+      patterns[0].sequence[1][i] = 0x3C;
+    } else if (i == 3 || i == 4) {
+      patterns[0].sequence[1][i] = 0x24;
+    } else {
+      patterns[0].sequence[1][i] = 0x00;
+    }
+    if (i == 1 || i == 6) {
+      patterns[0].sequence[2][i] = 0x7E;
+    } else if (i > 1 && i < 6) {
+      patterns[0].sequence[2][i] = 0x42;
+    } else {
+      patterns[0].sequence[2][i] = 0x00;
+    }
+  }
+  
+  // patterns[1] is 4 4x4 squares and outer border bass
   patterns[1].levels = 4;
   patterns[1].sequence = (char **)malloc(sizeof(char *) * patterns[1].levels);
   for (i = 0; i < patterns[1].levels; i++) {
@@ -200,34 +293,24 @@ void initializeGraphics(void) {
   for (i = 0; i < ROWS; i++) {
     if (i == 0 || i == 7) {
       patterns[1].bass[i] = 0xFF;
-      patterns[1].sequence[3][i] = 0xFF;
     } else {
       patterns[1].bass[i] = 0x81;
-      patterns[1].sequence[3][i] = 0x81;
     }
-    if (i == 3 || i == 4) {
-      patterns[1].sequence[0][i] = 0x18;
+    if (i < 4) {
+      patterns[1].sequence[0][i] = 0xF0; 
+      patterns[1].sequence[1][i] = 0x0F; 
+      patterns[1].sequence[2][i] = 0x00;
+      patterns[1].sequence[3][i] = 0x00;
     } else {
       patterns[1].sequence[0][i] = 0x00;
-    }
-    if (i == 2 || i == 5) {
-      patterns[1].sequence[1][i] = 0x3C;
-    } else if (i == 3 || i == 4) {
-      patterns[1].sequence[1][i] = 0x24;
-    } else {
       patterns[1].sequence[1][i] = 0x00;
-    }
-    if (i == 1 || i == 6) {
-      patterns[1].sequence[2][i] = 0x7E;
-    } else if (i > 1 && i < 6) {
-      patterns[1].sequence[2][i] = 0x42;
-    } else {
-      patterns[1].sequence[2][i] = 0x00;
+      patterns[1].sequence[2][i] = 0xF0; 
+      patterns[1].sequence[3][i] = 0x0F;
     }
   }
   
-  // patterns[2] is 4 4x4 squares and outer border bass
-  patterns[2].levels = 4;
+  // patterns[2] is 9 inner 2x2 squares and outer border bass
+  patterns[2].levels = 3;
   patterns[2].sequence = (char **)malloc(sizeof(char *) * patterns[2].levels);
   for (i = 0; i < patterns[2].levels; i++) {
     patterns[2].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
@@ -238,92 +321,67 @@ void initializeGraphics(void) {
     } else {
       patterns[2].bass[i] = 0x81;
     }
-    if (i < 4) {
-      patterns[2].sequence[0][i] = 0xF0; 
-      patterns[2].sequence[1][i] = 0x0F; 
+    if (i == 1 || i == 2 || i == 5 || i == 6) { 
+      patterns[2].sequence[0][i] = 0x00;
+      patterns[2].sequence[1][i] = 0x18;
+      patterns[2].sequence[2][i] = 0x66;
+    } else if (i == 3 || i == 4) {
+      patterns[2].sequence[0][i] = 0x18;
+      patterns[2].sequence[1][i] = 0x66;
       patterns[2].sequence[2][i] = 0x00;
-      patterns[2].sequence[3][i] = 0x00;
     } else {
       patterns[2].sequence[0][i] = 0x00;
       patterns[2].sequence[1][i] = 0x00;
-      patterns[2].sequence[2][i] = 0xF0; 
-      patterns[2].sequence[3][i] = 0x0F;
+      patterns[2].sequence[2][i] = 0x00;
     }
   }
   
-  // patterns[3] is 9 inner 2x2 squares and outer border bass
-  patterns[3].levels = 3;
+  // patterns[3] is horizontal bars with vertical bass
+  patterns[3].levels = 4;
   patterns[3].sequence = (char **)malloc(sizeof(char *) * patterns[3].levels);
   for (i = 0; i < patterns[3].levels; i++) {
     patterns[3].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
   }
   for (i = 0; i < ROWS; i++) {
-    if (i == 0 || i == 7) {
-      patterns[3].bass[i] = 0xFF;
+    patterns[3].bass[i] = 0x81;
+    if (i == 3 || i == 4) {
+      patterns[3].sequence[0][i] = 0xFF;
     } else {
-      patterns[3].bass[i] = 0x81;
+      patterns[3].sequence[0][i] = 0x00;
     }
-    if (i == 1 || i == 2 || i == 5 || i == 6) { 
-      patterns[3].sequence[0][i] = 0x00;
-      patterns[3].sequence[1][i] = 0x18;
-      patterns[3].sequence[2][i] = 0x66;
-    } else if (i == 3 || i == 4) {
-      patterns[3].sequence[0][i] = 0x18;
-      patterns[3].sequence[1][i] = 0x66;
-      patterns[3].sequence[2][i] = 0x00;
+    if (i == 2 || i == 5) {
+      patterns[3].sequence[1][i] = 0xFF;
     } else {
-      patterns[3].sequence[0][i] = 0x00;
       patterns[3].sequence[1][i] = 0x00;
+    }
+    if (i == 1 || i == 6) {
+      patterns[3].sequence[2][i] = 0xFF;
+    } else {
       patterns[3].sequence[2][i] = 0x00;
+    }
+    if (i == 0 || i == 7) {
+      patterns[3].sequence[3][i] = 0xFF;
+    } else {
+      patterns[3].sequence[3][i] = 0x00;
     }
   }
   
-  // patterns[4] is horizontal bars with vertical bass
+  // patterns[4] is vertical bars with horizontal bass
   patterns[4].levels = 4;
   patterns[4].sequence = (char **)malloc(sizeof(char *) * patterns[4].levels);
   for (i = 0; i < patterns[4].levels; i++) {
     patterns[4].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
   }
   for (i = 0; i < ROWS; i++) {
-    patterns[4].bass[i] = 0x81;
-    if (i == 3 || i == 4) {
-      patterns[4].sequence[0][i] = 0xFF;
-    } else {
-      patterns[4].sequence[0][i] = 0x00;
-    }
-    if (i == 2 || i == 5) {
-      patterns[4].sequence[1][i] = 0xFF;
-    } else {
-      patterns[4].sequence[1][i] = 0x00;
-    }
-    if (i == 1 || i == 6) {
-      patterns[4].sequence[2][i] = 0xFF;
-    } else {
-      patterns[4].sequence[2][i] = 0x00;
-    }
     if (i == 0 || i == 7) {
-      patterns[4].sequence[3][i] = 0xFF;
+      patterns[4].bass[i] = 0xFF;
     } else {
-      patterns[4].sequence[3][i] = 0x00;
+      patterns[4].bass[i] = 0x00;
     }
-  }
-  
-  // patterns[5] is vertical bars with horizontal bass
-  patterns[5].levels = 4;
-  patterns[5].sequence = (char **)malloc(sizeof(char *) * patterns[5].levels);
-  for (i = 0; i < patterns[5].levels; i++) {
-    patterns[5].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
-  }
-  for (i = 0; i < ROWS; i++) {
-    if (i == 0 || i == 7) {
-      patterns[5].bass[i] = 0xFF;
-    } else {
-      patterns[5].bass[i] = 0x00;
-    }
-    patterns[5].sequence[0][i] = 0x18;
-    patterns[5].sequence[1][i] = 0x24;
-    patterns[5].sequence[2][i] = 0x42;
-    patterns[5].sequence[3][i] = 0x81;
+    patterns[4].sequence[0][i] = 0x18;
+    patterns[4].sequence[1][i] = 0x24;
+    patterns[4].sequence[2][i] = 0x42;
+    patterns[4].sequence[3][i] = 0x81;
   }
 }
 
@@ -345,6 +403,25 @@ void clearPattern(void) {
 
 /*
 ***********************************************************************                       
+  averageSamples
+  
+  Find average of lowPass and micOut sample data
+***********************************************************************
+*/
+
+void averageSamples(void) {
+  lowPassAvg = 0;
+  micOutAvg = 0;
+  for (i = 0; i < MILSECFACTOR; i++) {
+    lowPassAvg += (double)lowPass[i];
+    micOutAvg += (double)micOut[i];
+  }
+  lowPassAvg /= MILSECFACTOR;
+  micOutAvg /= MILSECFACTOR;
+}
+
+/*
+***********************************************************************                       
   loadPattern
   
   Loads ledarray with a pattern based on patIndex
@@ -352,36 +429,21 @@ void clearPattern(void) {
 */
 
 void loadPattern(void) {
-  // special case pattern (patIndex = 0)
-  // scrolling amplitude display to the left (white/all RGB)
-  if (patIndex == 0) {
-    for (i = 0; i < COLORS; i++) {
-      for (j = 0; j < ROWS; j++) {
-        ledarray[i][j] = ledarray[i][j] << 1;
-        if (j < micOut * ROWS) {
-          ledarray[i][j] = ledarray[i][j] | 0x01;
-        }
-      }
-    }
-  } else {
-    clearPattern();
-    
-    if (lowPass >= BASSTHRESH) {
-      // fills bass pattern white/all RGB
-      copyPattern(RED, patterns[patIndex].bass);
-      copyPattern(GREEN, patterns[patIndex].bass);
-      copyPattern(BLUE, patterns[patIndex].bass);
-    }
-    
-    color = RANDINT(COLORS); // randomize starting color
-    j = (int)((double)micOut * (double)(patterns[patIndex].levels + 1)); // number of pattern sequences to output
-    if (j > patterns[patIndex].levels) {
-      j = patterns[patIndex].levels;
-    }
-    for (i = 0; i < j; i++) {
-      copyPattern(color, patterns[patIndex].sequence[i]);
-      color = NEXTINT(color, COLORS);
-    }
+  if (lowPassAvg >= BASSTHRESH) {
+    // fills bass pattern white/all RGB
+    copyPattern(RED, patterns[patIndex].bass);
+    copyPattern(GREEN, patterns[patIndex].bass);
+    copyPattern(BLUE, patterns[patIndex].bass);
+  }
+  
+  color = startColor; // use same color scheme for repeated pattern
+  j = (int)((double)micOutAvg * (double)(patterns[patIndex].levels + 1)); // number of pattern sequences to output
+  if (j > patterns[patIndex].levels) {
+    j = patterns[patIndex].levels;
+  }
+  for (i = 0; i < j; i++) {
+    copyPattern(color, patterns[patIndex].sequence[i]);
+    color = NEXTINT(color, COLORS);
   }
 }
 
@@ -408,8 +470,8 @@ void copyPattern(int color, char pat[]) {
 */
 
 void shiftLedArray(void) {
-  for (i = 2; i >= 0; i--) {
-    for (j = 7; j >= 0; j--) {
+  for (i = COLORS - 1; i >= 0; i--) {
+    for (j = ROWS - 1; j >= 0; j--) {
       shiftout(ledarray[i][j]);
     }
   }
@@ -423,25 +485,42 @@ void shiftLedArray(void) {
             MISO = PM[4]
             SCK  = PM[5]
 ***********************************************************************
-*/ 
+*/
+ 
 void shiftout(char x) {
-  // read the SPTEF bit, continue if bit is 1
+  // read the SPTEF bit, wait until bit is 1
   // write data to SPI data register
   // wait for 30 cycles for SPI data to shift out 
-  while (SPISR_SPTEF == 0) {
-    SPIDR = x;
-    asm {
-      psha
-      pshc
-      ldaa  #7
-    loop:  
-      dbne  a,loop
-      pulc
-      pula
-    }
+  while (SPISR_SPTEF == 0) {}
+  SPIDR = x;
+  asm {
+    psha
+    pshc
+    ldaa  #7
+  loop:  
+    dbne  a,loop
+    pulc
+    pula
   }
 }
 
+/*
+***********************************************************************
+  checkInChar
+  
+  Checks SCI receiver for potential characters
+  If exists, return read character
+  If not, return -1
+***********************************************************************
+*/
+
+char checkInChar(void) {
+  /* receives character from the terminal channel */
+  if (!(SCISR1 & 0x20)) {
+    return -1;
+  }
+  return SCIDRL;
+}
 
 // ***********************************************************************
 // Character I/O Library Routines for 9S12C32 (for debugging only)
@@ -449,11 +528,10 @@ void shiftout(char x) {
 // Name:         inchar
 // Description:  inputs ASCII character from SCI serial port and returns it
 // ***********************************************************************
-char  inchar(void) {
+char inchar(void) {
   /* receives character from the terminal channel */
-        while (!(SCISR1 & 0x20)); /* wait for RDR input */
-    return SCIDRL;
- 
+  while (!(SCISR1 & 0x20)); /* wait for RDR input */
+  return SCIDRL;
 }
 
 // ***********************************************************************
@@ -463,7 +541,7 @@ char  inchar(void) {
 // ***********************************************************************/
 void outchar(char ch) {
   /* transmits a character to the terminal channel */
-    while (!(SCISR1 & 0x80));  /* wait for TDR empty */
-    SCIDRL = ch;
+  while (!(SCISR1 & 0x80));  /* wait for TDR empty */
+  SCIDRL = ch;
 }
 
