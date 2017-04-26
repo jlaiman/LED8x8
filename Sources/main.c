@@ -21,57 +21,46 @@ char inchar(void);
 void outchar(char x);
 
 // LED graphic functions
+void initializeGraphics(void);
 void loadPattern(void);
-void copyPattern(int color, const char pat[]);
+void copyPattern(int color, char pat[]);
 
 // SPI functions
 void shiftLedArray(void);
 void shiftout(char x);
 
 //  Constant declarations
-#define COLORS        3 // number of color channels
-#define RED           0 // red channel is index 0
-#define GREEN         1 // green channel is index 1
-#define BLUE          2 // blue channel is index 2
-#define ROWS          8 // number of LED rows
-#define BASSTHRESH    .75 // threshold for bass hit/kick
-#define MICLOWTHRESH  .25 // low threshold for mic out
-#define MICMIDTHRESH  .50 // mid threshold for mic out
-#define MICHIGHTHRESH .75 // high threshold for mic out             
-#define RANDCOLOR     ((int)(rand() * COLORS)) // returns random color index
-#define NEXTCOLOR(c)  ((c + 1) % COLORS) // returns next color index
-#define PREVCOLOR(c)  ((c + COLORS - 1) % COLORS) // returns previous color index
+#define COLORS          3 // number of color channels
+#define RED             0 // red channel is index 0
+#define GREEN           1 // green channel is index 1
+#define BLUE            2 // blue channel is index 2
+#define ROWS            8 // number of LED rows
+#define BASSTHRESH      .75 // threshold for bass hit/kick
+#define NUMPATTERNS     5 // number of patterns for LED graphic
+#define RANDINT(max)    ((int)(rand() * max)) // returns random int
+#define NEXTINT(n, mod) ((n + 1) % mod) // returns next int
+#define PREVINT(n, mod) ((n + mod - 1) % mod) // returns previous int
 			 		  		
 //  Variable declarations
 int i;
 int j;
-int color;
-char ledarray[COLORS][ROWS];// buffer of led values
+int color; // color index for loading patterns
+char ledarray[COLORS][ROWS]; // buffer of led values
 char lowPass; // low-pass ATD value
 char micOut; // mic out ATD value
 
-//  Graphic constants and variables
-char pattern[ROWS];
-const char squareBorder2[ROWS]    = {0x00, 0x00, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00}; // inner square
-const char squareBorder4[ROWS]    = {0x00, 0x00, 0x3C, 0x24, 0x24, 0x3C, 0x00, 0x00}; // second inner square
-const char squareBorder6[ROWS]    = {0x00, 0x7E, 0x42, 0x42, 0x42, 0x42, 0x7E, 0x00}; // second outer square
-const char squareBorder8[ROWS]    = {0xFF, 0x81, 0x81, 0x81, 0x81, 0x81, 0x81, 0xFF}; // outer square
-const char squareTopLeft[ROWS]    = {0xF0, 0xF0, 0xF0, 0xF0, 0x00, 0x00, 0x00, 0x00}; // top left square
-const char squareTopRight[ROWS]   = {0x0F, 0x0F, 0x0F, 0x0F, 0x00, 0x00, 0x00, 0x00}; // top right square
-const char squareBotLeft[ROWS]    = {0x00, 0x00, 0x00, 0x00, 0xF0, 0xF0, 0xF0, 0xF0}; // bottom left square
-const char squareBotRight[ROWS]   = {0x00, 0x00, 0x00, 0x00, 0x0F, 0x0F, 0x0F, 0x0F}; // bottom right square
-const char inSquareTopLeft[ROWS]  = {0x00, 0x60, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00}; // top left inner square
-const char inSquareTopMid[ROWS]   = {0x00, 0x18, 0x18, 0x00, 0x00, 0x00, 0x00, 0x00}; // top mid inner square
-const char inSquareTopRight[ROWS] = {0x00, 0x06, 0x06, 0x00, 0x00, 0x00, 0x00, 0x00}; // top right inner square
-const char inSquareMidLeft[ROWS]  = {0x00, 0x00, 0x00, 0x60, 0x60, 0x00, 0x00, 0x00}; // mid left inner square
-const char inSquareMidMid[ROWS]   = {0x00, 0x00, 0x00, 0x18, 0x18, 0x00, 0x00, 0x00}; // mid mid inner square
-const char inSquareMidRight[ROWS] = {0x00, 0x00, 0x00, 0x06, 0x06, 0x00, 0x00, 0x00}; // mid right inner square
-const char inSquareBotLeft[ROWS]  = {0x00, 0x00, 0x00, 0x00, 0x00, 0x60, 0x60, 0x00}; // bot left inner square
-const char inSquareBotMid[ROWS]   = {0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x18, 0x00}; // bot mid inner square
-const char inSquareBotRight[ROWS] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x06, 0x00}; // bot right inner square
+//  Graphic struct and variables
+typedef struct PatternSeq {
+  int levels; // number of levels in pattern sequence
+  char bass[ROWS]; // bass pattern
+  char ** sequence; // audio pattern sequence
+} Pattern;
+
+Pattern patterns[NUMPATTERNS]; // array of all Patterns
+int patIndex; // index for current working pattern
 	 	   		
 // Initializations
-void  initializations(void) {
+void initializations(void) {
 
 // Set the PLL speed (bus clock = 24 MHz)
   CLKSEL = CLKSEL & 0x80; // disengage PLL from system
@@ -120,6 +109,9 @@ void  initializations(void) {
 /* Initialize RTI for 2.048 ms interrupt rate */
   CRGINT_RTIE = 1; // enable RTI interrupt
   RTICTL = 0x50; // RTI rate of 2.048 ms
+  
+/* Initialize graphic patterns */
+  initializeGraphics();
 
 }
 	 		  			 		  		
@@ -188,6 +180,145 @@ interrupt 15 void TIM_ISR(void) {
  	
 }
 
+void initializeGraphics() {
+  patIndex = 0;
+  
+  // patterns[0] is concentric squares and outer border bass
+  patterns[0].levels = 4;
+  patterns[0].sequence = (char **)malloc(sizeof(char *) * patterns[0].levels);
+  for (i = 0; i < patterns[0].levels; i++) {
+    patterns[0].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
+  }
+  for (i = 0; i < ROWS; i++) {
+    if (i == 0 || i == 7) {
+      patterns[0].bass[i] = 0xFF;
+      patterns[0].sequence[3][i] = 0xFF;
+    } else {
+      patterns[0].bass[i] = 0x81;
+      patterns[0].sequence[3][i] = 0x81;
+    }
+    if (i == 3 || i == 4) {
+      patterns[0].sequence[0][i] = 0x18;
+    } else {
+      patterns[0].sequence[0][i] = 0x00;
+    }
+    if (i == 2 || i == 5) {
+      patterns[0].sequence[1][i] = 0x3C;
+    } else if (i == 3 || i == 4) {
+      patterns[0].sequence[1][i] = 0x24;
+    } else {
+      patterns[0].sequence[1][i] = 0x00;
+    }
+    if (i == 1 || i == 6) {
+      patterns[0].sequence[2][i] = 0x7E;
+    } else if (i > 1 && i < 6) {
+      patterns[0].sequence[2][i] = 0x42;
+    } else {
+      patterns[0].sequence[2][i] = 0x00;
+    }
+  }
+  
+  // patterns[1] is 4 4x4 squares and outer border bass
+  patterns[1].levels = 4;
+  patterns[1].sequence = (char **)malloc(sizeof(char *) * patterns[1].levels);
+  for (i = 0; i < patterns[1].levels; i++) {
+    patterns[1].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
+  }
+  for (i = 0; i < ROWS; i++) {
+    if (i == 0 || i == 7) {
+      patterns[1].bass[i] = 0xFF;
+    } else {
+      patterns[1].bass[i] = 0x81;
+    }
+    if (i < 4) {
+      patterns[1].sequence[0][i] = 0xF0; 
+      patterns[1].sequence[1][i] = 0x0F; 
+      patterns[1].sequence[2][i] = 0x00;
+      patterns[1].sequence[3][i] = 0x00;
+    } else {
+      patterns[1].sequence[0][i] = 0x00;
+      patterns[1].sequence[1][i] = 0x00;
+      patterns[1].sequence[2][i] = 0xF0; 
+      patterns[1].sequence[3][i] = 0x0F;
+    }
+  }
+  
+  // patterns[2] is 9 inner 2x2 squares and outer border bass
+  patterns[2].levels = 3;
+  patterns[2].sequence = (char **)malloc(sizeof(char *) * patterns[2].levels);
+  for (i = 0; i < patterns[2].levels; i++) {
+    patterns[2].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
+  }
+  for (i = 0; i < ROWS; i++) {
+    if (i == 0 || i == 7) {
+      patterns[2].bass[i] = 0xFF;
+    } else {
+      patterns[2].bass[i] = 0x81;
+    }
+    if (i == 1 || i == 2 || i == 5 || i == 6) { 
+      patterns[2].sequence[0][i] = 0x00;
+      patterns[2].sequence[1][i] = 0x18;
+      patterns[2].sequence[2][i] = 0x66;
+    } else if (i == 3 || i == 4) {
+      patterns[2].sequence[0][i] = 0x18;
+      patterns[2].sequence[1][i] = 0x66;
+      patterns[2].sequence[2][i] = 0x00;
+    } else {
+      patterns[2].sequence[0][i] = 0x00;
+      patterns[2].sequence[1][i] = 0x00;
+      patterns[2].sequence[2][i] = 0x00;
+    }
+  }
+  
+  // patterns[3] is horizontal bars with vertical bass
+  patterns[3].levels = 4;
+  patterns[3].sequence = (char **)malloc(sizeof(char *) * patterns[3].levels);
+  for (i = 0; i < patterns[3].levels; i++) {
+    patterns[3].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
+  }
+  for (i = 0; i < ROWS; i++) {
+    patterns[3].bass[i] = 0x81;
+    if (i == 3 || i == 4) {
+      patterns[3].sequence[0][i] = 0xFF;
+    } else {
+      patterns[3].sequence[0][i] = 0x00;
+    }
+    if (i == 2 || i == 5) {
+      patterns[3].sequence[1][i] = 0xFF;
+    } else {
+      patterns[3].sequence[1][i] = 0x00;
+    }
+    if (i == 1 || i == 6) {
+      patterns[3].sequence[2][i] = 0xFF;
+    } else {
+      patterns[3].sequence[2][i] = 0x00;
+    }
+    if (i == 0 || i == 7) {
+      patterns[3].sequence[3][i] = 0xFF;
+    } else {
+      patterns[3].sequence[3][i] = 0x00;
+    }
+  }
+  
+  // patterns[4] is vertical bars with horizontal bass
+  patterns[4].levels = 4;
+  patterns[4].sequence = (char **)malloc(sizeof(char *) * patterns[4].levels);
+  for (i = 0; i < patterns[4].levels; i++) {
+    patterns[4].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
+  }
+  for (i = 0; i < ROWS; i++) {
+    if (i == 0 || i == 7) {
+      patterns[4].bass[i] = 0xFF;
+    } else {
+      patterns[4].bass[i] = 0x00;
+    }
+    patterns[4].sequence[0][i] = 0x18;
+    patterns[4].sequence[1][i] = 0x24;
+    patterns[4].sequence[2][i] = 0x42;
+    patterns[4].sequence[3][i] = 0x81;
+  }
+}
+
 /*
 ***********************************************************************                       
   loadPattern
@@ -196,33 +327,18 @@ interrupt 15 void TIM_ISR(void) {
 ***********************************************************************
 */
 
-void loadPattern(void) {
+void loadPattern() {
   if (lowPass >= BASSTHRESH) {
-    // file outer square border white
-    //pattern = squareBorder8;
-    copyPattern(RED, squareBorder8);
-    copyPattern(GREEN, squareBorder8);
-    copyPattern(BLUE, squareBorder8);
+    // fills bass pattern white
+    copyPattern(RED, patterns[patIndex].bass);
+    copyPattern(GREEN, patterns[patIndex].bass);
+    copyPattern(BLUE, patterns[patIndex].bass);
   }
   
-  color = RANDCOLOR; // randomize starting color
-  if (micOut >= MICLOWTHRESH) {
-    // fill inner square border
-    //pattern = squareBorder2;
-    copyPattern(color, squareBorder2);
-    color = NEXTCOLOR(color);
-  }
-  if (micOut >= MICMIDTHRESH) {
-    // fill second inner square border
-    //pattern = squareBorder4;
-    copyPattern(color, squareBorder4); 
-    color = NEXTCOLOR(color);
-  }
-  if (micOut >= MICHIGHTHRESH) {
-    // fill second outer square border
-    //pattern = squareBorder6;
-    copyPattern(color, squareBorder6); 
-    color = NEXTCOLOR(color);
+  color = RANDINT(COLORS); // randomize starting color
+  for (i = 0; i < (int)(micOut * patterns[patIndex].levels); i++) {
+    copyPattern(color, patterns[patIndex].sequence[i]);
+    color = NEXTINT(color, COLORS);
   }
 }
 
@@ -234,7 +350,7 @@ void loadPattern(void) {
 ***********************************************************************
 */
 
-void copyPattern(int color, const char pat[]) {
+void copyPattern(int color, char pat[]) {
   for (i = 0; i < ROWS; i++) {
     ledarray[color][i] = pat[i];
   }
