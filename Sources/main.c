@@ -24,10 +24,12 @@ char checkInChar(void);
 
 // LED graphic functions
 void initializeGraphics(void);
+void getNewPattern(void);
 void clearPattern(void);
 void averageSamples(void);
 void loadPattern(void);
 void copyPattern(int color, char pat[]);
+void loadAmerica(void);
 
 // SPI functions
 void shiftLedArray(void);
@@ -39,8 +41,9 @@ void shiftout(char x);
 #define RED             0 // red channel is index 0
 #define GREEN           1 // green channel is index 1
 #define BLUE            2 // blue channel is index 2
+#define WHITE           3 // white color is all RGB values
 
-#define NUMPATTERNS     5 // number of patterns for LED graphic
+#define NUMPATTERNS     6 // number of patterns for LED graphic
 #define BASSTHRESH      0xC0 // threshold for bass hit/kick (.75)
 
 #define RANDINT(max)    ((int)(rand() * max)) // returns random int
@@ -79,6 +82,7 @@ typedef struct PatternSeq {
 Pattern patterns[NUMPATTERNS]; // array of all Patterns
 int patIndex; // index for current working pattern
 int prevPatIndex; // previous pattern index
+char america; // flag to display American flag or not
 
 /*
 ***********************************************************************
@@ -227,19 +231,16 @@ interrupt 15 void TIM_ISR(void) {
  	}
  	
  	if (milSec == 1) {
-   	prevPatIndex = patIndex; // save previous pattern index
-   	patIndex = (int)checkInChar(); // use SCI to input character
-   	if (patIndex != -1) {
-   	  patIndex = patIndex - (int)'0'; // fix '0' character offset
-   	  startColor = RANDINT(COLORS); // generate new random starting color
-   	} else {
-   	  patIndex = prevPatIndex; // maintain old pattern
-   	}
-   	
-    clearPattern();
- 	  averageSamples();
- 	  PWMDTY0 = (char)(PWMPER0 * micOutAvg);
- 	  loadPattern();
+ 	  if (america == 1) {
+ 	    loadAmerica();
+ 	  } else {
+   	  getNewPattern();
+      clearPattern();
+ 	    averageSamples();
+ 	    PWMDTY0 = (char)(PWMPER0 * micOutAvg / 0xFF);
+ 	    loadPattern();
+ 	  }
+ 	  
  	  shiftLedArray();
  	  
  	  milSec = 0;
@@ -257,6 +258,7 @@ interrupt 15 void TIM_ISR(void) {
 void initializeGraphics(void) {
   startColor = RANDINT(COLORS);
   patIndex = RANDINT(NUMPATTERNS);
+  america = 0;
   
   // patterns[0] is concentric squares and outer border bass
   patterns[0].levels = 4;
@@ -392,6 +394,70 @@ void initializeGraphics(void) {
     patterns[4].sequence[2][i] = 0x42;
     patterns[4].sequence[3][i] = 0x81;
   }
+  
+  // patterns[5] is concentric squares with bass corner pattern
+  patterns[5].levels = 4;
+  patterns[5].sequence = (char **)malloc(sizeof(char *) * patterns[5].levels);
+  for (i = 0; i < patterns[5].levels; i++) {
+    patterns[5].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
+  }
+  patterns[5].bass[0] = 0xF0;
+  patterns[5].bass[1] = 0x8E;
+  patterns[5].bass[2] = 0xB2;
+  patterns[5].bass[3] = 0xA2;
+  patterns[5].bass[4] = 0x45;
+  patterns[5].bass[5] = 0x4D;
+  patterns[5].bass[6] = 0x71;
+  patterns[5].bass[7] = 0x0F;
+  for (i = 0; i < ROWS; i++) {
+    if (i == 3 || i == 4) {
+      patterns[5].sequence[0][i] = 0x18;
+    } else {
+      patterns[5].sequence[0][i] = 0x00;
+    }
+    if (i == 2 || i == 5) {
+      patterns[5].sequence[1][i] = 0x3C;
+    } else if (i > 2 && i < 5) {
+      patterns[5].sequence[1][i] = 0x24;
+    } else {
+      patterns[5].sequence[1][i] = 0x00;
+    }
+    if (i == 1 || i == 6) {
+      patterns[5].sequence[2][i] = 0x7E;
+    } else if (i > 1 && i < 6) {
+      patterns[5].sequence[2][i] = 0x42;
+    } else {
+      patterns[5].sequence[2][i] = 0x00;
+    }
+    if (i == 0 || i == 7) {
+      patterns[5].sequence[3][i] = 0xFF;
+    } else if (i > 0 && i < 7) {
+      patterns[5].sequence[3][i] = 0x81;
+    } else {
+      patterns[5].sequence[3][i] = 0x00;
+    }
+  }
+}
+
+/*
+***********************************************************************
+  getNewPattern
+  
+  Checks serial in for new pattern input
+  If new pattern index, change pattern
+  Else, maintain same pattern
+***********************************************************************
+*/
+
+void getNewPattern(void) {
+  prevPatIndex = patIndex; // save previous pattern index
+  patIndex = (int)checkInChar(); // use SCI to input character
+  if (patIndex != -1) {
+    patIndex = patIndex - (int)'0'; // fix '0' character offset
+    startColor = RANDINT(COLORS); // generate new random starting color
+  } else {
+    patIndex = prevPatIndex; // maintain old pattern
+  }
 }
 
 /*
@@ -438,7 +504,7 @@ void averageSamples(void) {
 */
 
 void loadPattern(void) {
-  if (lowPassAvg >= BASSTHRESH) {
+  if ((lowPassAvg & 0xFF) >= BASSTHRESH) {
     // fills bass pattern white/all RGB
     copyPattern(RED, patterns[patIndex].bass);
     copyPattern(GREEN, patterns[patIndex].bass);
@@ -450,7 +516,14 @@ void loadPattern(void) {
   j = 0xFF / (patterns[patIndex].levels + 1);
   count = 0;
   for (i = 0; i < (micOutAvg & 0xFF); i += j) {
-    copyPattern(color, patterns[patIndex].sequence[count]);
+    switch (color) {
+      case RED:
+      case GREEN:
+      case BLUE:  copyPattern(color, patterns[patIndex].sequence[count]); break;
+      case WHITE: copyPattern(RED, patterns[patIndex].sequence[count]);
+                  copyPattern(GREEN, patterns[patIndex].sequence[count]);
+                  copyPattern(BLUE, patterns[patIndex].sequence[count]); break;
+    }
     color = NEXTINT(color, COLORS);
     count++;
   }
@@ -468,6 +541,43 @@ void copyPattern(int color, char pat[]) {
   for (i = 0; i < ROWS; i++) {
     ledarray[color][i] = pat[i];
   }
+}
+
+/*
+***********************************************************************
+  loadAmerica
+  
+  Loads American flag pattern to ledarray
+***********************************************************************
+*/
+
+void loadAmerica(void) {
+  ledarray[RED][0] = 0x5F;
+  ledarray[RED][1] = 0xAF;
+  ledarray[RED][2] = 0x5F;
+  ledarray[RED][3] = 0xAF;
+  ledarray[RED][4] = 0xFF;
+  ledarray[RED][5] = 0xFF;
+  ledarray[RED][6] = 0xFF;
+  ledarray[RED][7] = 0xFF;
+  
+  ledarray[GREEN][0] = 0x50;
+  ledarray[GREEN][1] = 0xAF;
+  ledarray[GREEN][2] = 0x50;
+  ledarray[GREEN][3] = 0xAF;
+  ledarray[GREEN][4] = 0x00;
+  ledarray[GREEN][5] = 0xFF;
+  ledarray[GREEN][6] = 0x00;
+  ledarray[GREEN][7] = 0xFF;
+  
+  ledarray[BLUE][0] = 0xF0;
+  ledarray[BLUE][1] = 0xFF;
+  ledarray[BLUE][2] = 0xF0;
+  ledarray[BLUE][3] = 0xFF;
+  ledarray[BLUE][4] = 0x00;
+  ledarray[BLUE][5] = 0xFF;
+  ledarray[BLUE][6] = 0x00;
+  ledarray[BLUE][7] = 0xFF;
 }
 
 /*
