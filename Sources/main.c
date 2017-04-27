@@ -12,8 +12,6 @@
 #include <hidef.h>           /* common defines and macros */
 #include "derivative.h"      /* derivative-specific definitions */
 #include <mc9s12c32.h>
-#include <stdlib.h>
-#include <math.h>
 
 // All funtions after main should be initialized here
 
@@ -44,9 +42,10 @@ void shiftout(char x);
 #define WHITE           3 // white color is all RGB values
 
 #define NUMPATTERNS     6 // number of patterns for LED graphic
+#define MAXNUMSEQ       4 // maximum number of sequences in any given pattern
 #define BASSTHRESH      0xC0 // threshold for bass hit/kick (.75)
 
-#define RANDINT(max)    ((int)(rand() * max)) // returns random int
+#define RANDINT(max)    ((int)(timCount % max)) // returns random int
 #define NEXTINT(n, mod) ((n + 1) % mod)       // returns next int
 #define PREVINT(n, mod) ((n + mod - 1) % mod) // returns previous int
 
@@ -81,7 +80,7 @@ unsigned int micOutAvg; // mic out ATD average value
 typedef struct PatternSeq {
   int levels; // number of levels in pattern sequence
   char bass[ROWS]; // bass pattern
-  char ** sequence; // audio pattern sequence
+  char sequence[MAXNUMSEQ][ROWS]; // audio pattern sequence
 } Pattern;
 
 Pattern patterns[NUMPATTERNS]; // array of all Patterns
@@ -289,16 +288,19 @@ interrupt 15 void TIM_ISR(void) {
  	}
  	
  	if (milSec == 1) {
+ 	  averageSamples();
+ 	  
  	  if (america == 1) {
  	    loadAmerica();
+ 	    //PWMDTY0 = (char)(PWMPER0 * lowPassAvg / 0xFF);
+ 	    PWMDTY0 = PWMPER0;
  	  } else {
    	  getNewPattern();
       clearPattern();
- 	    averageSamples();
  	    loadPattern();
+ 	    PWMDTY0 = (char)(PWMPER0 * micOutAvg / 0xFF);
  	  }
  	  
- 	  PWMDTY0 = (char)(PWMPER0 * micOutAvg / 0xFF);
  	  shiftLedArray();
  	  
  	  milSec = 0;
@@ -316,14 +318,15 @@ interrupt 15 void TIM_ISR(void) {
 void initializeGraphics(void) {
   startColor = RANDINT(COLORS);
   patIndex = RANDINT(NUMPATTERNS);
-  america = 0;
+  america = 1;
   
   // patterns[0] is concentric squares and outer border bass
   patterns[0].levels = 4;
-  patterns[0].sequence = (char **)malloc(sizeof(char *) * patterns[0].levels);
-  for (i = 0; i < patterns[0].levels; i++) {
-    patterns[0].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
-  }
+  //patterns[0].bass = (char *)malloc(sizeof(char) * ROWS);
+  //patterns[0].sequence = (char **)malloc(sizeof(char *) * patterns[0].levels);
+  //for (i = 0; i < patterns[0].levels; i++) {
+  //  patterns[0].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
+  //}
   for (i = 0; i < ROWS; i++) {
     if (i == 0 || i == 7) {
       patterns[0].bass[i] = 0xFF;
@@ -355,10 +358,11 @@ void initializeGraphics(void) {
   
   // patterns[1] is 4 4x4 squares and outer border bass
   patterns[1].levels = 4;
-  patterns[1].sequence = (char **)malloc(sizeof(char *) * patterns[1].levels);
-  for (i = 0; i < patterns[1].levels; i++) {
-    patterns[1].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
-  }
+  //patterns[1].bass = (char *)malloc(sizeof(char) * ROWS);
+  //patterns[1].sequence = (char **)malloc(sizeof(char *) * patterns[1].levels);
+  //for (i = 0; i < patterns[1].levels; i++) {
+  //  patterns[1].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
+  //}
   for (i = 0; i < ROWS; i++) {
     if (i == 0 || i == 7) {
       patterns[1].bass[i] = 0xFF;
@@ -380,10 +384,11 @@ void initializeGraphics(void) {
   
   // patterns[2] is 9 inner 2x2 squares and outer border bass
   patterns[2].levels = 3;
-  patterns[2].sequence = (char **)malloc(sizeof(char *) * patterns[2].levels);
-  for (i = 0; i < patterns[2].levels; i++) {
-    patterns[2].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
-  }
+  //patterns[2].bass = (char *)malloc(sizeof(char) * ROWS);
+  //patterns[2].sequence = (char **)malloc(sizeof(char *) * patterns[2].levels);
+  //for (i = 0; i < patterns[2].levels; i++) {
+  //  patterns[2].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
+  //}
   for (i = 0; i < ROWS; i++) {
     if (i == 0 || i == 7) {
       patterns[2].bass[i] = 0xFF;
@@ -407,10 +412,11 @@ void initializeGraphics(void) {
   
   // patterns[3] is horizontal bars with vertical bass
   patterns[3].levels = 4;
-  patterns[3].sequence = (char **)malloc(sizeof(char *) * patterns[3].levels);
-  for (i = 0; i < patterns[3].levels; i++) {
-    patterns[3].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
-  }
+  //patterns[3].bass = (char *)malloc(sizeof(char) * ROWS);
+  //patterns[3].sequence = (char **)malloc(sizeof(char *) * patterns[3].levels);
+  //for (i = 0; i < patterns[3].levels; i++) {
+  //  patterns[3].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
+  //}
   for (i = 0; i < ROWS; i++) {
     patterns[3].bass[i] = 0x81;
     if (i == 3 || i == 4) {
@@ -437,10 +443,11 @@ void initializeGraphics(void) {
   
   // patterns[4] is vertical bars with horizontal bass
   patterns[4].levels = 4;
-  patterns[4].sequence = (char **)malloc(sizeof(char *) * patterns[4].levels);
-  for (i = 0; i < patterns[4].levels; i++) {
-    patterns[4].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
-  }
+  //patterns[4].bass = (char *)malloc(sizeof(char) * ROWS);
+  //patterns[4].sequence = (char **)malloc(sizeof(char *) * patterns[4].levels);
+  //for (i = 0; i < patterns[4].levels; i++) {
+  //  patterns[4].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
+  //}
   for (i = 0; i < ROWS; i++) {
     if (i == 0 || i == 7) {
       patterns[4].bass[i] = 0xFF;
@@ -455,10 +462,11 @@ void initializeGraphics(void) {
   
   // patterns[5] is concentric squares with bass corner pattern
   patterns[5].levels = 4;
-  patterns[5].sequence = (char **)malloc(sizeof(char *) * patterns[5].levels);
-  for (i = 0; i < patterns[5].levels; i++) {
-    patterns[5].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
-  }
+  //patterns[5].bass = (char *)malloc(sizeof(char) * ROWS);
+  //patterns[5].sequence = (char **)malloc(sizeof(char *) * patterns[5].levels);
+  //for (i = 0; i < patterns[5].levels; i++) {
+  //  patterns[5].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
+  //}
   patterns[5].bass[0] = 0xF0;
   patterns[5].bass[1] = 0x8E;
   patterns[5].bass[2] = 0xB2;
@@ -721,4 +729,3 @@ void outchar(char ch) {
   while (!(SCISR1 & 0x80));  /* wait for TDR empty */
   SCIDRL = ch;
 }
-
