@@ -55,6 +55,11 @@ void shiftout(char x);
 #define MILSECFACTOR    50   // number of compares to make 1 ms
                              // .001 / (60 / (24e6 / 2^3))
 
+#define AN4MASK 0x10
+#define AN5MASK 0x20
+#define AN6MASK 0x40
+#define AN7MASK 0x80
+
 // Variable declarations
 int i; // loop index
 int j; // loop index
@@ -83,6 +88,10 @@ Pattern patterns[NUMPATTERNS]; // array of all Patterns
 int patIndex; // index for current working pattern
 int prevPatIndex; // previous pattern index
 char america; // flag to display American flag or not
+
+//push button variables
+char prevpb; // previous state of push buttons
+char pbflag; // flags for push buttons
 
 /*
 ***********************************************************************
@@ -158,6 +167,8 @@ void initializations(void) {
   CRGINT_RTIE = 1; // enable RTI interrupt
   RTICTL = 0x50; // RTI rate of 2.048 ms
   
+  ATDDIEN = 0xF0; // enable AN4-AN7 for digital inputs
+  
 /* Initialize graphic patterns */
   initializeGraphics();
   
@@ -181,6 +192,32 @@ void main(void) {
 
   for(;;) {
     
+    // AN4 - Switch between patterns and American flag
+    if (pbflag & AN4MASK) {
+      america = 1 - america;
+      pbflag = pbflag & ~0x10;
+    }
+    
+    // AN5 - Go to next pattern
+    if (pbflag & AN5MASK) {
+      patIndex = NEXTINT(patIndex, NUMPATTERNS);
+      startColor = RANDINT(COLORS);
+      pbflag = pbflag & ~AN5MASK;
+    }
+    
+    // AN6 - Go to previous pattern
+    if (pbflag & AN6MASK) {
+      patIndex = PREVINT(patIndex, NUMPATTERNS);
+      startColor = RANDINT(COLORS);
+      pbflag = pbflag & ~AN6MASK;
+    }
+    
+    // AN7 - Go to random pattern
+    if (pbflag & AN7MASK) {
+      patIndex = RANDINT(NUMPATTERNS);
+      startColor = RANDINT(COLORS);
+      pbflag = pbflag & ~AN7MASK;
+    }
   } /* loop forever */
   
 }  /* make sure that you never leave main */
@@ -190,7 +227,7 @@ void main(void) {
 // ***********************************************************************
 //  RTI interrupt service routine: rti_isr
 //  
-//  Initialized for 5-10 ms (approx.) interrupt rate - note: you need to
+//  Initialized for 2 ms (approx.) interrupt rate - note: you need to
 //    add code above to do this
 //  
 //  Samples state of pushbuttons (PAD7 = left, PAD6 = right)
@@ -203,7 +240,28 @@ void main(void) {
 interrupt 7 void RTI_ISR( void) {
   // set CRGFLG bit to clear RTI device flag
   CRGFLG = CRGFLG | 0x80;
-	
+  
+  // AN4 - Switch between patterns and American flag
+  if((prevpb & AN4MASK) && !PORTAD0_PTAD4) {
+    pbflag |= AN4MASK;
+  }
+  
+  // AN5 - Go to next pattern
+  if((prevpb & AN5MASK) && !PORTAD0_PTAD5) {
+    pbflag |= AN5MASK;
+  }
+  
+  // AN6 - Go to previous pattern
+  if((prevpb & AN6MASK) && !PORTAD0_PTAD6) {
+    pbflag |= AN6MASK;
+  }
+  
+  // AN7 - Go to random pattern
+  if((prevpb & AN7MASK) && !PORTAD0_PTAD7) {
+    pbflag |= AN7MASK;
+  }
+  
+	prevpb = PORTAD0;
 }
 
 /*
@@ -221,8 +279,8 @@ interrupt 15 void TIM_ISR(void) {
  	
  	ATDCTL5 = 0x10; // start ATD conversion
  	while (ATDSTAT0_SCF == 0) {} // wait for conversion complete
- 	lowPass[timCount] = ATDDR0H; // retrieve/load low-pass ATD value
- 	micOut[timCount] = ATDDR1H; // retrieve/load mic out ATD value
+ 	micOut[timCount] = ATDDR0H; // retrieve/load mic out ATD value
+ 	lowPass[timCount] = ATDDR1H; // retrieve/load low-pass ATD value
  	
  	timCount++;
  	if (timCount == MILSECFACTOR) {
@@ -237,10 +295,10 @@ interrupt 15 void TIM_ISR(void) {
    	  getNewPattern();
       clearPattern();
  	    averageSamples();
- 	    PWMDTY0 = (char)(PWMPER0 * micOutAvg / 0xFF);
  	    loadPattern();
  	  }
  	  
+ 	  PWMDTY0 = (char)(PWMPER0 * micOutAvg / 0xFF);
  	  shiftLedArray();
  	  
  	  milSec = 0;
