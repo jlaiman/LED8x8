@@ -1,9 +1,9 @@
 // ***********************************************************************
-//  ECE 362 Final Project
+// ECE 362 Final Project
 //
-// 8x8 LED display                    
+// 8x8 LED display
 // ***********************************************************************
-//	 	   			 		  			 		  		
+// 
 // Completed by: Ben Ng, Joe Aronson, John Laiman, Max Brown
 //               I'm not telling you my class number
 //               Never completed
@@ -41,7 +41,7 @@ void shiftout(char x);
 #define BLUE            2 // blue channel is index 2
 
 #define NUMPATTERNS     5 // number of patterns for LED graphic
-#define BASSTHRESH      .75 // threshold for bass hit/kick
+#define BASSTHRESH      0xC0 // threshold for bass hit/kick (.75)
 
 #define RANDINT(max)    ((int)(rand() * max)) // returns random int
 #define NEXTINT(n, mod) ((n + 1) % mod)       // returns next int
@@ -51,10 +51,11 @@ void shiftout(char x);
 #define TIMVAL          60   // TC7 value (60 / (24e6 / 8) = .02 ms)
 #define MILSECFACTOR    50   // number of compares to make 1 ms
                              // .001 / (60 / (24e6 / 2^3))
-			 		  		
-//  Variable declarations
+
+// Variable declarations
 int i; // loop index
 int j; // loop index
+int count;
 
 int timCount; // timer interrupt count
 char milSec; // 1 ms flag
@@ -65,8 +66,8 @@ int startColor; // pattern starting color
 char ledarray[COLORS][ROWS]; // buffer of led values
 char lowPass[MILSECFACTOR]; // low-pass ATD values
 char micOut[MILSECFACTOR]; // mic out ATD values
-double lowPassAvg; // low-pass ATD average value
-double micOutAvg; // mic out ATD average value
+unsigned int lowPassAvg; // low-pass ATD average value
+unsigned int micOutAvg; // mic out ATD average value
 
 //  Graphic struct and variables
 typedef struct PatternSeq {
@@ -78,31 +79,40 @@ typedef struct PatternSeq {
 Pattern patterns[NUMPATTERNS]; // array of all Patterns
 int patIndex; // index for current working pattern
 int prevPatIndex; // previous pattern index
-	 	   		
-// Initializations
-void initializations(void) {
 
+/*
+***********************************************************************
+  
+  Initializations
+  
+  PLL (bus clock), SCI, SPI, TIM, ATD, PWM, RTI, Graphics
+  
+***********************************************************************
+*/
+
+void initializations(void) {
+  
 // Set the PLL speed (bus clock = 24 MHz)
   CLKSEL = CLKSEL & 0x80; // disengage PLL from system
   PLLCTL = PLLCTL | 0x40; // turn on PLL
   SYNR = 0x02;            // set PLL multiplier
   REFDV = 0;              // set PLL divider
-  while (!(CRGFLG & 0x08)){  }
+  while (!(CRGFLG & 0x08)) {}
   CLKSEL = CLKSEL | 0x80; // engage PLL
   
 // Disable watchdog timer (COPCTL register)
   COPCTL = 0x40;    // COP off - RTI and COP stopped in BDM-mode
-
+  
 // Initialize asynchronous serial port (SCI) for 9600 baud, no interrupts
   SCIBDH =  0x00;   // set baud rate to 9600
   SCIBDL =  0x9C;   // 24,000,000 / 16 / 156 = 9600 (approx)
   SCICR1 =  0x00;   // $9C = 156
   SCICR2 =  0x0C;   // initialize SCI for program-driven operation
-
+  
 // Initialize the SPI
   DDRM |= 0x30;     // initialize portm 4 and 5 for output
-  SPIBR = 0x01;     // initialize baud rate for 6Mbps 
-                    // (we may need to change this depending 
+  SPIBR = 0x01;     // initialize baud rate for 6Mbps
+                    // (we may need to change this depending
                     // on shift register speed)
   SPICR1_CPHA = 0;  // sample at even edges
   SPICR1_MSTR = 1;  // set as master
@@ -121,7 +131,7 @@ void initializations(void) {
  Initialize the ATD to sample 2 D.C. input voltages (range: 0 to 5V)
  on Channel 0 and 1. The ATD should be operated in normal flag clear
  mode using nominal sample time/clock prescaler values, 8-bit, unsigned, non-FIFO mode.
-*/	 	   			 		  			 		  		
+*/
   ATDCTL2 = 0x80; // power up ATD
   ATDCTL3 = 0x10; // set conversion sequence length to TWO
   ATDCTL4 = 0x85; // select 8-bit resolution and sample time
@@ -146,7 +156,7 @@ void initializations(void) {
   
 /* Initialize graphic patterns */
   initializeGraphics();
-
+  
 }
 
 /*
@@ -159,7 +169,7 @@ void initializations(void) {
 
 void main(void) {
   DisableInterrupts;
-	initializations(); 		  			 		  		
+	initializations();
 	EnableInterrupts;
 	
   TIE_C7I = 1;      // enable TC7 interupts
@@ -173,37 +183,36 @@ void main(void) {
 
 
 
-// ***********************************************************************                       
-// RTI interrupt service routine: rti_isr
-//
+// ***********************************************************************
+//  RTI interrupt service routine: rti_isr
+//  
 //  Initialized for 5-10 ms (approx.) interrupt rate - note: you need to
 //    add code above to do this
-//
+//  
 //  Samples state of pushbuttons (PAD7 = left, PAD6 = right)
-//
+//  
 //  If change in state from "high" to "low" detected, set pushbutton flag
 //     leftpb (for PAD7 H -> L), rghtpb (for PAD6 H -> L)
 //     Recall that pushbuttons are momentary contact closures to ground
 // ***********************************************************************
- 
-interrupt 7 void RTI_ISR( void) {
- // set CRGFLG bit to clear RTI device flag
-  	CRGFLG = CRGFLG | 0x80; 
-	
 
+interrupt 7 void RTI_ISR( void) {
+  // set CRGFLG bit to clear RTI device flag
+  CRGFLG = CRGFLG | 0x80;
+	
 }
 
 /*
-***********************************************************************                       
+***********************************************************************
   TIM interrupt service routine
-
+  
   Initialized for .02 ms interrupt rate
   Samples every .02 ms and flags every 1 ms to shift out LED data
 ***********************************************************************
 */
 
 interrupt 15 void TIM_ISR(void) {
-  // clear TIM CH 7 interrupt flag 
+  // clear TIM CH 7 interrupt flag
  	TFLG1 = TFLG1 | 0x80;
  	
  	ATDCTL5 = 0x10; // start ATD conversion
@@ -217,7 +226,7 @@ interrupt 15 void TIM_ISR(void) {
     timCount = 0;
  	}
  	
- 	if (milSec == 1) { 
+ 	if (milSec == 1) {
    	prevPatIndex = patIndex; // save previous pattern index
    	patIndex = (int)checkInChar(); // use SCI to input character
    	if (patIndex != -1) {
@@ -238,14 +247,14 @@ interrupt 15 void TIM_ISR(void) {
 }
 
 /*
-***********************************************************************                       
+***********************************************************************
   initializeGraphics
 
   Load sequences with graphics and bass patterns
 ***********************************************************************
 */
 
-void initializeGraphics(void) {   
+void initializeGraphics(void) {
   startColor = RANDINT(COLORS);
   patIndex = RANDINT(NUMPATTERNS);
   
@@ -297,14 +306,14 @@ void initializeGraphics(void) {
       patterns[1].bass[i] = 0x81;
     }
     if (i < 4) {
-      patterns[1].sequence[0][i] = 0xF0; 
-      patterns[1].sequence[1][i] = 0x0F; 
+      patterns[1].sequence[0][i] = 0xF0;
+      patterns[1].sequence[1][i] = 0x0F;
       patterns[1].sequence[2][i] = 0x00;
       patterns[1].sequence[3][i] = 0x00;
     } else {
       patterns[1].sequence[0][i] = 0x00;
       patterns[1].sequence[1][i] = 0x00;
-      patterns[1].sequence[2][i] = 0xF0; 
+      patterns[1].sequence[2][i] = 0xF0;
       patterns[1].sequence[3][i] = 0x0F;
     }
   }
@@ -321,7 +330,7 @@ void initializeGraphics(void) {
     } else {
       patterns[2].bass[i] = 0x81;
     }
-    if (i == 1 || i == 2 || i == 5 || i == 6) { 
+    if (i == 1 || i == 2 || i == 5 || i == 6) {
       patterns[2].sequence[0][i] = 0x00;
       patterns[2].sequence[1][i] = 0x18;
       patterns[2].sequence[2][i] = 0x66;
@@ -386,7 +395,7 @@ void initializeGraphics(void) {
 }
 
 /*
-***********************************************************************                       
+***********************************************************************
   clearPattern
   
   Clears ledarray (fills with 0's)
@@ -402,7 +411,7 @@ void clearPattern(void) {
 }
 
 /*
-***********************************************************************                       
+***********************************************************************
   averageSamples
   
   Find average of lowPass and micOut sample data
@@ -413,15 +422,15 @@ void averageSamples(void) {
   lowPassAvg = 0;
   micOutAvg = 0;
   for (i = 0; i < MILSECFACTOR; i++) {
-    lowPassAvg += (double)lowPass[i];
-    micOutAvg += (double)micOut[i];
+    lowPassAvg += (unsigned int)lowPass[i];
+    micOutAvg += (unsigned int)micOut[i];
   }
   lowPassAvg /= MILSECFACTOR;
   micOutAvg /= MILSECFACTOR;
 }
 
 /*
-***********************************************************************                       
+***********************************************************************
   loadPattern
   
   Loads ledarray with a pattern based on patIndex
@@ -437,18 +446,18 @@ void loadPattern(void) {
   }
   
   color = startColor; // use same color scheme for repeated pattern
-  j = (int)((double)micOutAvg * (double)(patterns[patIndex].levels + 1)); // number of pattern sequences to output
-  if (j > patterns[patIndex].levels) {
-    j = patterns[patIndex].levels;
-  }
-  for (i = 0; i < j; i++) {
-    copyPattern(color, patterns[patIndex].sequence[i]);
+  
+  j = 0xFF / (patterns[patIndex].levels + 1);
+  count = 0;
+  for (i = 0; i < (micOutAvg & 0xFF); i += j) {
+    copyPattern(color, patterns[patIndex].sequence[count]);
     color = NEXTINT(color, COLORS);
+    count++;
   }
 }
 
 /*
-***********************************************************************                       
+***********************************************************************
   copyPattern(int color, char pat[])
   
   Copies the current pattern into specified color channel
@@ -462,10 +471,10 @@ void copyPattern(int color, char pat[]) {
 }
 
 /*
-***********************************************************************                       
+***********************************************************************
   shiftLedArray
   
-  Shifts out current value of ledarray to LED's on board 		  			 		  		
+  Shifts out current value of ledarray to LED's on board
 ***********************************************************************
 */
 
@@ -479,14 +488,14 @@ void shiftLedArray(void) {
 
 /*
 ***********************************************************************
-  shiftout: Transmits the character x to external shift 
-            register using the SPI.  It should shift MSB first.  
-             
+  shiftout: Transmits the character x to external shift
+            register using the SPI.  It should shift MSB first.
+            
             MISO = PM[4]
             SCK  = PM[5]
 ***********************************************************************
 */
- 
+
 void shiftout(char x) {
   // read the SPTEF bit, wait until bit is 1
   // write data to SPI data register
