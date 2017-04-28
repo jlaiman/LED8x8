@@ -60,21 +60,21 @@ void shiftout(char x);
 #define AN7MASK 0x80
 
 // Variable declarations
-int i; // loop index
-int j; // loop index
-int count;
+int i = 0; // loop index
+int j = 0; // loop index
+int count = 0;
 
-int timCount; // timer interrupt count
-char milSec; // 1 ms flag
+int timCount = 0; // timer interrupt count
+char milSec = 0; // 1 ms flag
 
-int color; // color index for loading patterns
-int startColor; // pattern starting color
+int color = 0; // color index for loading patterns
+int startColor = 0; // pattern starting color
 
 char ledarray[COLORS][ROWS]; // buffer of led values
 char lowPass[MILSECFACTOR]; // low-pass ATD values
 char micOut[MILSECFACTOR]; // mic out ATD values
-unsigned int lowPassAvg; // low-pass ATD average value
-unsigned int micOutAvg; // mic out ATD average value
+unsigned int lowPassAvg = 0; // low-pass ATD average value
+unsigned int micOutAvg = 0; // mic out ATD average value
 
 //  Graphic struct and variables
 typedef struct PatternSeq {
@@ -84,13 +84,13 @@ typedef struct PatternSeq {
 } Pattern;
 
 Pattern patterns[NUMPATTERNS]; // array of all Patterns
-int patIndex; // index for current working pattern
-int prevPatIndex; // previous pattern index
-char america; // flag to display American flag or not
+int patIndex = 0; // index for current working pattern
+int prevPatIndex = 0; // previous pattern index
+char america = 0; // flag to display American flag or not
 
 //push button variables
 char prevpb; // previous state of push buttons
-char pbflag; // flags for push buttons
+char pbflag = 0; // flags for push buttons
 
 /*
 ***********************************************************************
@@ -122,22 +122,22 @@ void initializations(void) {
   SCICR2 =  0x0C;   // initialize SCI for program-driven operation
   
 // Initialize the SPI
-  DDRM |= 0x30;     // initialize portm 4 and 5 for output
+  DDRM  = 0x30;     // initialize portm 4 and 5 for output
   SPIBR = 0x01;     // initialize baud rate for 6Mbps
                     // (we may need to change this depending
                     // on shift register speed)
-  SPICR1_CPHA = 0;  // sample at even edges
+  SPICR1_CPHA = 0;  // sample at odd edges
   SPICR1_MSTR = 1;  // set as master
   SPICR1_SPE  = 1;  // enable spi system
   
 // Initialize the TIM
-  TSCR1_TEN = 1;        // enable tim system
-  TIOS_IOS7 = 1;        // set ch7 for output compare
-  TSCR2 |= TIMPRESCALE; // set pre-scale to 8 (tim freq = 24 MHz/8 = 3 MHz)
-                        // tim period = 1/3 MHz = .333 us
-  TSCR2_TCRE = 1;       // reset TCNT on successful oc7
-  TC7 = TIMVAL;         // period = 60 * .333 us = .02 ms
-  TIE_C7I = 0;          // disable TC7 interupts initially
+  TSCR1_TEN = 1;       // enable tim system
+  TIOS_IOS7 = 1;       // set ch7 for output compare
+  TSCR2 = TIMPRESCALE; // set pre-scale to 8 (tim freq = 24 MHz/8 = 3 MHz)
+                       // tim period = 1/3 MHz = .333 us
+  TSCR2_TCRE = 1;      // reset TCNT on successful oc7
+  TC7 = TIMVAL;        // period = 60 * .333 us = .02 ms
+  TIE_C7I = 0;         // disable TC7 interupts initially
   
 /* 
  Initialize the ATD to sample 2 D.C. input voltages (range: 0 to 5V)
@@ -151,25 +151,29 @@ void initializations(void) {
 /*
   Initialize PWM
 */
-	MODRR	= 0x01; // Port T module routing register - PWM on PT0
-	DDRT |= 0x01; // PT0 is output
-	PWME = 0x01; // PWM ch 0 enable
-  PWMPOL = 0x01; // PWM ch 0 active high polarity
-  PWMCLK = 0x00; // PWM ch 0 clock A
-  PWMPRCLK = 0x02; // PWM pre-scale clock (2^2 = 4) - 24 MHz / 4 = 6 MHz
-  PWMCAE = 0x00; // PWM center align disabled
-  PWMCTL = 0x00; // PWM control (concatenate enable)
-  PWMPER0 = 0x64; // PWM ch 0 period register (100) - 6 MHz / 100 = 60 kHz
-  PWMDTY0 = 0x00; // PWM ch 0 duty register - 0 initially (LEDs off)
+  MODRR	= 0x08;    // Port T module routing register - PWM on PT3
+  DDRT = 0x0C;     // PT3 (PWM), PT2 (Latch) are outputs
+  PTT_PTT2 = 1;    // PT2 = 1 (Latch on)
+  //PTT_PTT3 = 0;    // PT3 = 0 (Active low output enable on)
+  PWME = 0x08;     // PWM ch 3 enable
+  PWMPOL = 0x00;   // PWM ch 3 active low polarity
+  PWMCLK = 0x00;   // PWM ch 3 clock B
+  PWMPRCLK = 0x22; // PWM pre-scale clock (2^2 = 4) - 24 MHz / 4 = 6 MHz
+  PWMCAE = 0x00;   // PWM center align disabled
+  PWMCTL = 0x00;   // PWM control (concatenate enable)
+  PWMPER3 = 0xFF;  // PWM ch 3 period register (255) - 6 MHz / 255 = 23529 Hz
+  PWMDTY3 = 0x00;  // PWM ch 3 duty register - 0 initially (LEDs off)
   
 /* Initialize RTI for 2.048 ms interrupt rate */
   CRGINT_RTIE = 1; // enable RTI interrupt
   RTICTL = 0x50; // RTI rate of 2.048 ms
   
+  DDRAD = 0; // program port AD for input mode
   ATDDIEN = 0xF0; // enable AN4-AN7 for digital inputs
   
 /* Initialize graphic patterns */
   initializeGraphics();
+  clearPattern();
   
 }
 
@@ -194,7 +198,7 @@ void main(void) {
     // AN4 - Switch between patterns and American flag
     if (pbflag & AN4MASK) {
       america = 1 - america;
-      pbflag = pbflag & ~0x10;
+      pbflag = pbflag & ~AN4MASK;
     }
     
     // AN5 - Go to next pattern
@@ -292,13 +296,13 @@ interrupt 15 void TIM_ISR(void) {
  	  
  	  if (america == 1) {
  	    loadAmerica();
- 	    //PWMDTY0 = (char)(PWMPER0 * lowPassAvg / 0xFF);
- 	    PWMDTY0 = PWMPER0;
+ 	    //PWMDTY3 = (char)(PWMPER3 * lowPassAvg / 0xFF);
+ 	    PWMDTY3 = PWMPER3;
  	  } else {
    	  getNewPattern();
       clearPattern();
  	    loadPattern();
- 	    PWMDTY0 = (char)(PWMPER0 * micOutAvg / 0xFF);
+ 	    PWMDTY3 = (char)(PWMPER3 * micOutAvg / 0xFF);
  	  }
  	  
  	  shiftLedArray();
@@ -322,11 +326,6 @@ void initializeGraphics(void) {
   
   // patterns[0] is concentric squares and outer border bass
   patterns[0].levels = 4;
-  //patterns[0].bass = (char *)malloc(sizeof(char) * ROWS);
-  //patterns[0].sequence = (char **)malloc(sizeof(char *) * patterns[0].levels);
-  //for (i = 0; i < patterns[0].levels; i++) {
-  //  patterns[0].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
-  //}
   for (i = 0; i < ROWS; i++) {
     if (i == 0 || i == 7) {
       patterns[0].bass[i] = 0xFF;
@@ -358,11 +357,6 @@ void initializeGraphics(void) {
   
   // patterns[1] is 4 4x4 squares and outer border bass
   patterns[1].levels = 4;
-  //patterns[1].bass = (char *)malloc(sizeof(char) * ROWS);
-  //patterns[1].sequence = (char **)malloc(sizeof(char *) * patterns[1].levels);
-  //for (i = 0; i < patterns[1].levels; i++) {
-  //  patterns[1].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
-  //}
   for (i = 0; i < ROWS; i++) {
     if (i == 0 || i == 7) {
       patterns[1].bass[i] = 0xFF;
@@ -384,11 +378,6 @@ void initializeGraphics(void) {
   
   // patterns[2] is 9 inner 2x2 squares and outer border bass
   patterns[2].levels = 3;
-  //patterns[2].bass = (char *)malloc(sizeof(char) * ROWS);
-  //patterns[2].sequence = (char **)malloc(sizeof(char *) * patterns[2].levels);
-  //for (i = 0; i < patterns[2].levels; i++) {
-  //  patterns[2].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
-  //}
   for (i = 0; i < ROWS; i++) {
     if (i == 0 || i == 7) {
       patterns[2].bass[i] = 0xFF;
@@ -412,11 +401,6 @@ void initializeGraphics(void) {
   
   // patterns[3] is horizontal bars with vertical bass
   patterns[3].levels = 4;
-  //patterns[3].bass = (char *)malloc(sizeof(char) * ROWS);
-  //patterns[3].sequence = (char **)malloc(sizeof(char *) * patterns[3].levels);
-  //for (i = 0; i < patterns[3].levels; i++) {
-  //  patterns[3].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
-  //}
   for (i = 0; i < ROWS; i++) {
     patterns[3].bass[i] = 0x81;
     if (i == 3 || i == 4) {
@@ -443,11 +427,6 @@ void initializeGraphics(void) {
   
   // patterns[4] is vertical bars with horizontal bass
   patterns[4].levels = 4;
-  //patterns[4].bass = (char *)malloc(sizeof(char) * ROWS);
-  //patterns[4].sequence = (char **)malloc(sizeof(char *) * patterns[4].levels);
-  //for (i = 0; i < patterns[4].levels; i++) {
-  //  patterns[4].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
-  //}
   for (i = 0; i < ROWS; i++) {
     if (i == 0 || i == 7) {
       patterns[4].bass[i] = 0xFF;
@@ -462,11 +441,6 @@ void initializeGraphics(void) {
   
   // patterns[5] is concentric squares with bass corner pattern
   patterns[5].levels = 4;
-  //patterns[5].bass = (char *)malloc(sizeof(char) * ROWS);
-  //patterns[5].sequence = (char **)malloc(sizeof(char *) * patterns[5].levels);
-  //for (i = 0; i < patterns[5].levels; i++) {
-  //  patterns[5].sequence[i] = (char *)malloc(sizeof(char) * ROWS);
-  //}
   patterns[5].bass[0] = 0xF0;
   patterns[5].bass[1] = 0x8E;
   patterns[5].bass[2] = 0xB2;
@@ -557,8 +531,8 @@ void averageSamples(void) {
     lowPassAvg += (unsigned int)lowPass[i];
     micOutAvg += (unsigned int)micOut[i];
   }
-  lowPassAvg /= MILSECFACTOR;
-  micOutAvg /= MILSECFACTOR;
+  lowPassAvg = (lowPassAvg / MILSECFACTOR) & 0xFF;
+  micOutAvg = (micOutAvg / MILSECFACTOR) & 0xFF;
 }
 
 /*
@@ -570,7 +544,7 @@ void averageSamples(void) {
 */
 
 void loadPattern(void) {
-  if ((lowPassAvg & 0xFF) >= BASSTHRESH) {
+  if (lowPassAvg >= BASSTHRESH) {
     // fills bass pattern white/all RGB
     copyPattern(RED, patterns[patIndex].bass);
     copyPattern(GREEN, patterns[patIndex].bass);
@@ -667,7 +641,7 @@ void shiftLedArray(void) {
   shiftout: Transmits the character x to external shift
             register using the SPI.  It should shift MSB first.
             
-            MISO = PM[4]
+            MOSI = PM[4]
             SCK  = PM[5]
 ***********************************************************************
 */
