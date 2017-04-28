@@ -62,10 +62,14 @@ void shiftout(char x);
 // Variable declarations
 int i = 0; // loop index
 int j = 0; // loop index
+int k = 0;
+int l = 0;
 int count = 0;
 
 int timCount = 0; // timer interrupt count
 char milSec = 0; // 1 ms flag
+int sec = 0;
+char secFlag = 0;
 
 int color = 0; // color index for loading patterns
 int startColor = 0; // pattern starting color
@@ -123,7 +127,7 @@ void initializations(void) {
   
 // Initialize the SPI
   DDRM  = 0x30;     // initialize portm 4 and 5 for output
-  SPIBR = 0x01;     // initialize baud rate for 6Mbps
+  SPIBR = 0x07;     // initialize baud rate for 6Mbps
                     // (we may need to change this depending
                     // on shift register speed)
   SPICR1_CPHA = 0;  // sample at odd edges
@@ -152,7 +156,7 @@ void initializations(void) {
   Initialize PWM
 */
   MODRR	= 0x08;    // Port T module routing register - PWM on PT3
-  DDRT = 0x0C;     // PT3 (PWM), PT2 (Latch) are outputs
+  DDRT = 0x0C;     // PT3, PT2 are outputs
   PTT_PTT2 = 1;    // PT2 = 1 (Latch on)
   //PTT_PTT3 = 0;    // PT3 = 0 (Active low output enable on)
   PWME = 0x08;     // PWM ch 3 enable
@@ -191,36 +195,38 @@ void main(void) {
 	EnableInterrupts;
 	
   TIE_C7I = 1;      // enable TC7 interupts
-
-
+  america = 0;
+  
   for(;;) {
+    if (secFlag == 1) {
+ 	    averageSamples();
+      //micOutAvg = 0xFF;
+      lowPassAvg = 0x00;
+   	  PWMDTY3 = (char)(PWMPER3 * micOutAvg / 0xFF);
+   	  
+   	  if (america == 1) {
+   	    loadAmerica();
+   	    PWMDTY3 = (char)(PWMPER3 * micOutAvg / 0xFF);
+   	    //PWMDTY3 = PWMPER3;
+   	  } else {
+     	  //getNewPattern();
+        clearPattern();
+   	    loadPattern();
+   	  }
+   	  
+   	  shiftLedArray();
+   	  
+   	  secFlag = 0;
+   	  //patIndex = NEXTINT(patIndex, NUMPATTERNS);
+   	}
     
     // AN4 - Switch between patterns and American flag
     if (pbflag & AN4MASK) {
       america = 1 - america;
+      patIndex = NEXTINT(patIndex, NUMPATTERNS);
       pbflag = pbflag & ~AN4MASK;
     }
     
-    // AN5 - Go to next pattern
-    if (pbflag & AN5MASK) {
-      patIndex = NEXTINT(patIndex, NUMPATTERNS);
-      startColor = RANDINT(COLORS);
-      pbflag = pbflag & ~AN5MASK;
-    }
-    
-    // AN6 - Go to previous pattern
-    if (pbflag & AN6MASK) {
-      patIndex = PREVINT(patIndex, NUMPATTERNS);
-      startColor = RANDINT(COLORS);
-      pbflag = pbflag & ~AN6MASK;
-    }
-    
-    // AN7 - Go to random pattern
-    if (pbflag & AN7MASK) {
-      patIndex = RANDINT(NUMPATTERNS);
-      startColor = RANDINT(COLORS);
-      pbflag = pbflag & ~AN7MASK;
-    }
   } /* loop forever */
   
 }  /* make sure that you never leave main */
@@ -249,21 +255,6 @@ interrupt 7 void RTI_ISR( void) {
     pbflag |= AN4MASK;
   }
   
-  // AN5 - Go to next pattern
-  if((prevpb & AN5MASK) && !PORTAD0_PTAD5) {
-    pbflag |= AN5MASK;
-  }
-  
-  // AN6 - Go to previous pattern
-  if((prevpb & AN6MASK) && !PORTAD0_PTAD6) {
-    pbflag |= AN6MASK;
-  }
-  
-  // AN7 - Go to random pattern
-  if((prevpb & AN7MASK) && !PORTAD0_PTAD7) {
-    pbflag |= AN7MASK;
-  }
-  
 	prevpb = PORTAD0;
 }
 
@@ -290,24 +281,13 @@ interrupt 15 void TIM_ISR(void) {
  	  milSec = 1;
     timCount = 0;
  	}
- 	
  	if (milSec == 1) {
- 	  averageSamples();
- 	  
- 	  if (america == 1) {
- 	    loadAmerica();
- 	    //PWMDTY3 = (char)(PWMPER3 * lowPassAvg / 0xFF);
- 	    PWMDTY3 = PWMPER3;
- 	  } else {
-   	  getNewPattern();
-      clearPattern();
- 	    loadPattern();
- 	    PWMDTY3 = (char)(PWMPER3 * micOutAvg / 0xFF);
- 	  }
- 	  
- 	  shiftLedArray();
- 	  
  	  milSec = 0;
+ 	  sec++;
+ 	  if (sec == 50) {
+ 	    sec = 0;
+ 	    secFlag = 1;
+ 	  }
  	}
 }
 
@@ -320,9 +300,11 @@ interrupt 15 void TIM_ISR(void) {
 */
 
 void initializeGraphics(void) {
-  startColor = RANDINT(COLORS);
-  patIndex = RANDINT(NUMPATTERNS);
-  america = 1;
+  //startColor = RANDINT(COLORS);
+  startColor = RED;
+  //patIndex = RANDINT(NUMPATTERNS);
+  patIndex = 0;
+  america = 0;
   
   // patterns[0] is concentric squares and outer border bass
   patterns[0].levels = 4;
@@ -528,8 +510,8 @@ void averageSamples(void) {
   lowPassAvg = 0;
   micOutAvg = 0;
   for (i = 0; i < MILSECFACTOR; i++) {
-    lowPassAvg += (unsigned int)lowPass[i];
-    micOutAvg += (unsigned int)micOut[i];
+    lowPassAvg += ((unsigned int)lowPass[i]) & 0xFF;
+    micOutAvg += ((unsigned int)micOut[i]) & 0xFF;
   }
   lowPassAvg = (lowPassAvg / MILSECFACTOR) & 0xFF;
   micOutAvg = (micOutAvg / MILSECFACTOR) & 0xFF;
@@ -553,9 +535,10 @@ void loadPattern(void) {
   
   color = startColor; // use same color scheme for repeated pattern
   
-  j = 0xFF / (patterns[patIndex].levels + 1);
+  j = 0xFF / (patterns[patIndex].levels);
+  l = 0xFF % (patterns[patIndex].levels);
   count = 0;
-  for (i = 0; i < (micOutAvg & 0xFF); i += j) {
+  for (i = 0; i < (micOutAvg & 0xFF); i += j + l) {
     switch (color) {
       case RED:
       case GREEN:
@@ -565,6 +548,9 @@ void loadPattern(void) {
                   copyPattern(BLUE, patterns[patIndex].sequence[count]); break;
     }
     color = NEXTINT(color, COLORS);
+    if (color == BLUE) {
+      color = RED;
+    }
     count++;
   }
 }
@@ -578,8 +564,8 @@ void loadPattern(void) {
 */
 
 void copyPattern(int color, char pat[]) {
-  for (i = 0; i < ROWS; i++) {
-    ledarray[color][i] = pat[i];
+  for (k = 0; k < ROWS; k++) {
+    ledarray[color][k] |= pat[k];
   }
 }
 
