@@ -19,6 +19,7 @@
 char inchar(void);
 void outchar(char x);
 char checkInChar(void);
+void print(char * str);
 
 // LED graphic functions
 void initializeGraphics(void);
@@ -40,6 +41,7 @@ void shiftout(char x);
 #define GREEN           1 // green channel is index 1
 #define BLUE            2 // blue channel is index 2
 #define WHITE           3 // white color is all RGB values
+#define YELLOW          4 // yellow color is RED and GREEN
 
 #define NUMPATTERNS     6 // number of patterns for LED graphic
 #define MAXNUMSEQ       4 // maximum number of sequences in any given pattern
@@ -92,6 +94,8 @@ int patIndex = 0; // index for current working pattern
 int prevPatIndex = 0; // previous pattern index
 char america = 0; // flag to display American flag or not
 
+char * prompt = "\nEnter pattern (0-5): \0";
+
 //push button variables
 char prevpb; // previous state of push buttons
 char pbflag = 0; // flags for push buttons
@@ -131,6 +135,7 @@ void initializations(void) {
                     // (we may need to change this depending
                     // on shift register speed)
   SPICR1_CPHA = 0;  // sample at odd edges
+  SPICR1_CPOL = 0;  // active low SCLK
   SPICR1_MSTR = 1;  // set as master
   SPICR1_SPE  = 1;  // enable spi system
   
@@ -158,7 +163,6 @@ void initializations(void) {
   MODRR	= 0x08;    // Port T module routing register - PWM on PT3
   DDRT = 0x0C;     // PT3, PT2 are outputs
   PTT_PTT2 = 1;    // PT2 = 1 (Latch on)
-  //PTT_PTT3 = 0;    // PT3 = 0 (Active low output enable on)
   PWME = 0x08;     // PWM ch 3 enable
   PWMPOL = 0x00;   // PWM ch 3 active low polarity
   PWMCLK = 0x00;   // PWM ch 3 clock B
@@ -197,32 +201,33 @@ void main(void) {
   TIE_C7I = 1;      // enable TC7 interupts
   america = 0;
   
+  print(prompt);
+  
   for(;;) {
     if (secFlag == 1) {
  	    averageSamples();
       //micOutAvg = 0xFF;
-      lowPassAvg = 0x00;
+      //lowPassAvg = 0x00;
    	  PWMDTY3 = (char)(PWMPER3 * micOutAvg / 0xFF);
    	  
    	  if (america == 1) {
    	    loadAmerica();
-   	    PWMDTY3 = (char)(PWMPER3 * micOutAvg / 0xFF);
-   	    //PWMDTY3 = PWMPER3;
    	  } else {
-     	  //getNewPattern();
+     	  getNewPattern();
         clearPattern();
    	    loadPattern();
    	  }
    	  
+   	  PTT_PTT2 = 0;
    	  shiftLedArray();
+   	  PTT_PTT2 = 1;
    	  
    	  secFlag = 0;
-   	  //patIndex = NEXTINT(patIndex, NUMPATTERNS);
    	}
     
     // AN4 - Switch between patterns and American flag
     if (pbflag & AN4MASK) {
-      america = 1 - america;
+      //america = 1 - america;
       patIndex = NEXTINT(patIndex, NUMPATTERNS);
       pbflag = pbflag & ~AN4MASK;
     }
@@ -347,14 +352,14 @@ void initializeGraphics(void) {
     }
     if (i < 4) {
       patterns[1].sequence[0][i] = 0xF0;
-      patterns[1].sequence[1][i] = 0x0F;
-      patterns[1].sequence[2][i] = 0x00;
+      patterns[1].sequence[1][i] = 0x00;
+      patterns[1].sequence[2][i] = 0x0F;
       patterns[1].sequence[3][i] = 0x00;
     } else {
       patterns[1].sequence[0][i] = 0x00;
-      patterns[1].sequence[1][i] = 0x00;
-      patterns[1].sequence[2][i] = 0xF0;
-      patterns[1].sequence[3][i] = 0x0F;
+      patterns[1].sequence[1][i] = 0x0F;
+      patterns[1].sequence[2][i] = 0x00;
+      patterns[1].sequence[3][i] = 0xF0;
     }
   }
   
@@ -474,9 +479,10 @@ void initializeGraphics(void) {
 void getNewPattern(void) {
   prevPatIndex = patIndex; // save previous pattern index
   patIndex = (int)checkInChar(); // use SCI to input character
-  if (patIndex != -1) {
+  if (patIndex != -1 && patIndex >= '0' && patIndex <= '5') {
     patIndex = patIndex - (int)'0'; // fix '0' character offset
-    startColor = RANDINT(COLORS); // generate new random starting color
+    startColor = RANDINT(2); // generate new random starting color
+    print(prompt);
   } else {
     patIndex = prevPatIndex; // maintain old pattern
   }
@@ -546,6 +552,8 @@ void loadPattern(void) {
       case WHITE: copyPattern(RED, patterns[patIndex].sequence[count]);
                   copyPattern(GREEN, patterns[patIndex].sequence[count]);
                   copyPattern(BLUE, patterns[patIndex].sequence[count]); break;
+      case YELLOW:copyPattern(RED, patterns[patIndex].sequence[count]);
+                  copyPattern(GREEN, patterns[patIndex].sequence[count]); break;
     }
     color = NEXTINT(color, COLORS);
     if (color == BLUE) {
@@ -566,6 +574,9 @@ void loadPattern(void) {
 void copyPattern(int color, char pat[]) {
   for (k = 0; k < ROWS; k++) {
     ledarray[color][k] |= pat[k];
+    /*if (color == GREEN) {
+      ledarray[color][k] = ledarray[color][k] >> 1;
+    }*/
   }
 }
 
@@ -617,7 +628,7 @@ void loadAmerica(void) {
 void shiftLedArray(void) {
   for (i = COLORS - 1; i >= 0; i--) {
     for (j = ROWS - 1; j >= 0; j--) {
-      shiftout(ledarray[i][j]);
+      shiftout(ledarray[i][j] & 0xFF);
     }
   }
 }
@@ -639,13 +650,36 @@ void shiftout(char x) {
   while (SPISR_SPTEF == 0) {}
   SPIDR = x;
   asm {
-    psha
-    pshc
-    ldaa  #7
-  loop:  
-    dbne  a,loop
-    pulc
-    pula
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
+    nop
   }
 }
 
@@ -664,6 +698,7 @@ char checkInChar(void) {
   if (!(SCISR1 & 0x20)) {
     return -1;
   }
+  outchar(SCIDRL);
   return SCIDRL;
 }
 
@@ -688,4 +723,12 @@ void outchar(char ch) {
   /* transmits a character to the terminal channel */
   while (!(SCISR1 & 0x80));  /* wait for TDR empty */
   SCIDRL = ch;
+}
+
+
+void print(char * str) {
+  while (*str) {
+    outchar(*str);
+    str++;
+  }
 }
