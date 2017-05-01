@@ -5,8 +5,6 @@
 // ***********************************************************************
 // 
 // Completed by: Ben Ng, Joe Aronson, John Laiman, Max Brown
-//               I'm not telling you my class number
-//               Never completed
 // ***********************************************************************
 
 #include <hidef.h>           /* common defines and macros */
