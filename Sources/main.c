@@ -131,7 +131,7 @@ void initializations(void) {
   
 // Initialize the SPI
   DDRM  = 0x30;     // initialize portm 4 and 5 for output
-  SPIBR = 0x07;     // initialize baud rate for 6Mbps
+  SPIBR = 0x07;     // initialize baud rate for 93750 bps
                     // (we may need to change this depending
                     // on shift register speed)
   SPICR1_CPHA = 0;  // sample at odd edges
@@ -208,27 +208,27 @@ void main(void) {
  	    averageSamples();
       //micOutAvg = 0xFF;
       //lowPassAvg = 0x00;
-   	  PWMDTY3 = (char)(PWMPER3 * micOutAvg / 0xFF);
+   	  PWMDTY3 = (char)(PWMPER3 * micOutAvg / 0xFF); // set brightness of LEDs based on micOutAvg
    	  
    	  if (america == 1) {
-   	    loadAmerica();
+   	    loadAmerica(); // load American flag pattern
    	  } else {
-     	  getNewPattern();
-        clearPattern();
-   	    loadPattern();
+     	  getNewPattern(); // check serial in for new pattern index
+        clearPattern(); // clear ledarray to load new pattern
+   	    loadPattern(); // load new pattern
    	  }
    	  
-   	  PTT_PTT2 = 0;
-   	  shiftLedArray();
-   	  PTT_PTT2 = 1;
+   	  PTT_PTT2 = 0; // latch LED output
+   	  shiftLedArray(); // shift out ledarray data
+   	  PTT_PTT2 = 1; // unlatch LED output
    	  
    	  secFlag = 0;
    	}
     
     // AN4 - Switch between patterns and American flag
     if (pbflag & AN4MASK) {
-      //america = 1 - america;
-      patIndex = NEXTINT(patIndex, NUMPATTERNS);
+      america = 1 - america; // switch between modes (graphic pattern and American pattern)
+      //patIndex = NEXTINT(patIndex, NUMPATTERNS);
       pbflag = pbflag & ~AN4MASK;
     }
     
@@ -241,14 +241,11 @@ void main(void) {
 // ***********************************************************************
 //  RTI interrupt service routine: rti_isr
 //  
-//  Initialized for 2 ms (approx.) interrupt rate - note: you need to
-//    add code above to do this
+//  Initialized for 2.048 ms interrupt rate
 //  
-//  Samples state of pushbuttons (PAD7 = left, PAD6 = right)
+//  Samples state of pushbutton (AN4)
 //  
 //  If change in state from "high" to "low" detected, set pushbutton flag
-//     leftpb (for PAD7 H -> L), rghtpb (for PAD6 H -> L)
-//     Recall that pushbuttons are momentary contact closures to ground
 // ***********************************************************************
 
 interrupt 7 void RTI_ISR( void) {
@@ -282,14 +279,14 @@ interrupt 15 void TIM_ISR(void) {
  	lowPass[timCount] = ATDDR1H; // retrieve/load low-pass ATD value
  	
  	timCount++;
- 	if (timCount == MILSECFACTOR) {
+ 	if (timCount == MILSECFACTOR) { // set ms flag
  	  milSec = 1;
     timCount = 0;
  	}
- 	if (milSec == 1) {
+ 	if (milSec == 1) { // count every ms
  	  milSec = 0;
  	  sec++;
- 	  if (sec == 50) {
+ 	  if (sec == 50) { // set update display flag every 50 ms
  	    sec = 0;
  	    secFlag = 1;
  	  }
@@ -499,7 +496,7 @@ void getNewPattern(void) {
 void clearPattern(void) {
   for (i = 0; i < COLORS; i++) {
     for (j = 0; j < ROWS; j++) {
-      ledarray[i][j] = 0x00;
+      ledarray[i][j] = 0x00; // empty ledarray (fill with 0)
     }
   }
 }
@@ -516,11 +513,11 @@ void averageSamples(void) {
   lowPassAvg = 0;
   micOutAvg = 0;
   for (i = 0; i < MILSECFACTOR; i++) {
-    lowPassAvg += ((unsigned int)lowPass[i]) & 0xFF;
-    micOutAvg += ((unsigned int)micOut[i]) & 0xFF;
+    lowPassAvg += ((unsigned int)lowPass[i]) & 0xFF; // add bass samples up
+    micOutAvg += ((unsigned int)micOut[i]) & 0xFF; // add normal samples up
   }
-  lowPassAvg = (lowPassAvg / MILSECFACTOR) & 0xFF;
-  micOutAvg = (micOutAvg / MILSECFACTOR) & 0xFF;
+  lowPassAvg = (lowPassAvg / MILSECFACTOR) & 0xFF; // average bass samples
+  micOutAvg = (micOutAvg / MILSECFACTOR) & 0xFF; // average normal samples
 }
 
 /*
@@ -532,7 +529,7 @@ void averageSamples(void) {
 */
 
 void loadPattern(void) {
-  if (lowPassAvg >= BASSTHRESH) {
+  if (lowPassAvg >= BASSTHRESH) { // if bass meets threshold
     // fills bass pattern white/all RGB
     copyPattern(RED, patterns[patIndex].bass);
     copyPattern(GREEN, patterns[patIndex].bass);
@@ -541,9 +538,9 @@ void loadPattern(void) {
   
   color = startColor; // use same color scheme for repeated pattern
   
-  j = 0xFF / (patterns[patIndex].levels);
-  l = 0xFF % (patterns[patIndex].levels);
-  count = 0;
+  j = 0xFF / (patterns[patIndex].levels); // distribute sequence thresholds evenly
+  l = 0xFF % (patterns[patIndex].levels); // add remainder to ensure not outputting more than max sequences available
+  count = 0; // sequence index
   for (i = 0; i < (micOutAvg & 0xFF); i += j + l) {
     switch (color) {
       case RED:
@@ -555,8 +552,8 @@ void loadPattern(void) {
       case YELLOW:copyPattern(RED, patterns[patIndex].sequence[count]);
                   copyPattern(GREEN, patterns[patIndex].sequence[count]); break;
     }
-    color = NEXTINT(color, COLORS);
-    if (color == BLUE) {
+    color = NEXTINT(color, COLORS); // retrieve next color
+    if (color == BLUE) { // fix for blue channel not working
       color = RED;
     }
     count++;
@@ -573,8 +570,8 @@ void loadPattern(void) {
 
 void copyPattern(int color, char pat[]) {
   for (k = 0; k < ROWS; k++) {
-    ledarray[color][k] |= pat[k];
-    /*if (color == GREEN) {
+    ledarray[color][k] |= pat[k]; // copy in pattern data
+    /*if (color == GREEN) { // attempted fix to shifted green pattern
       ledarray[color][k] = ledarray[color][k] >> 1;
     }*/
   }
@@ -628,7 +625,7 @@ void loadAmerica(void) {
 void shiftLedArray(void) {
   for (i = COLORS - 1; i >= 0; i--) {
     for (j = ROWS - 1; j >= 0; j--) {
-      shiftout(ledarray[i][j] & 0xFF);
+      shiftout(ledarray[i][j] & 0xFF); // shift out pattern data with SPI
     }
   }
 }
@@ -695,11 +692,11 @@ void shiftout(char x) {
 
 char checkInChar(void) {
   /* receives character from the terminal channel */
-  if (!(SCISR1 & 0x20)) {
-    return -1;
+  if (!(SCISR1 & 0x20)) { // checks state of serial in
+    return -1; // if no character to read, exit
   }
-  outchar(SCIDRL);
-  return SCIDRL;
+  outchar(SCIDRL); // output character read
+  return SCIDRL; // return character read
 }
 
 // ***********************************************************************
@@ -725,6 +722,12 @@ void outchar(char ch) {
   SCIDRL = ch;
 }
 
+
+// ***********************************************************************
+// print
+// 
+// Outputs each character in given string to serial out
+// ***********************************************************************/
 
 void print(char * str) {
   while (*str) {
